@@ -30,14 +30,14 @@ libraries. It is built on the **Expo Modules API** (Kotlin-first), targets React
 
 ## Features
 
-- 📍 Continuous background tracking via a **foreground service** (`foregroundServiceType="location"`, Android 14/15 ready)
-- 🛰️ **Fused location** (Google Play Services) with automatic **GMS-free fallback** (`LocationManager.FUSED_PROVIDER`)
-- 🧮 **Kalman sensor fusion in C++/NDK** — smooths GPS jitter, rejects outliers, tightens accuracy (≈80% RMSE reduction when stationary, ≈47% while walking in our synthetic-track tests)
-- 🔋 **Battery intelligence** — Activity Recognition + significant-motion sensor stop GPS while still, resume on movement
-- 📐 **Geofencing** — circular *and* polygon geofences, "infinite" geofences (nearest-100 reconciliation), ENTER / EXIT / DWELL
-- 💾 **Offline persistence** (SQLite) + **batched HTTP sync** with retry/backoff (WorkManager)
-- 🔁 **Restart on boot** (persisted config) and a headless-safe data pipeline (buffer + sync without a JS runtime)
-- 🧩 **TypeScript-first API** with a one-line **Expo config plugin** that wires up all permissions
+- Continuous background tracking via a **foreground service** (`foregroundServiceType="location"`, Android 14/15 ready)
+- **Fused location** (Google Play Services) with automatic **GMS-free fallback** (`LocationManager.FUSED_PROVIDER`)
+- **Kalman sensor fusion in C++/NDK** — smooths GPS jitter, rejects outliers, tightens accuracy (≈80% RMSE reduction when stationary, ≈47% while walking in our synthetic-track tests)
+- **Battery intelligence** — Activity Recognition + significant-motion sensor stop GPS while still, resume on movement
+- **Geofencing** — circular *and* polygon geofences, "infinite" geofences (nearest-100 reconciliation), ENTER / EXIT / DWELL
+- **Offline persistence** (SQLite) + **batched HTTP sync** with retry/backoff (WorkManager)
+- **Restart on boot** (persisted config) and a headless-safe data pipeline (buffer + sync without a JS runtime)
+- **TypeScript-first API** with a one-line **Expo config plugin** that wires up all permissions
 
 ---
 

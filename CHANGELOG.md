@@ -4,7 +4,7 @@
 
 First public preview. Android only.
 
-### 🎉 New features
+### New features
 
 - **Background tracking** via a foreground service (`foregroundServiceType="location"`, Android 14/15 ready).
 - **Fused location** (Google Play Services) with automatic **GMS-free fallback** to `LocationManager`.
@@ -15,12 +15,12 @@ First public preview. Android only.
 - **Restart on boot** from persisted config; headless-safe buffer + sync pipeline.
 - **Expo config plugin** that injects permissions; **TypeScript-first** public API with strongly-typed events.
 
-### 💡 Others
+### Others
 
 - Targets the React Native New Architecture (Expo SDK 53+ / RN 0.76+).
 - C++ fusion core validated by a host unit test (≈80% RMSE reduction when stationary, ≈47% while walking).
 
-### 🚧 Known limitations
+### Known limitations
 
 - Android only; iOS not yet implemented.
 - Requires a development build (not Expo Go).
