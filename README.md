@@ -34,6 +34,10 @@ libraries. It is built on the **Expo Modules API** (Kotlin-first), targets React
 - **Fused location** (Google Play Services) with automatic **GMS-free fallback** (`LocationManager.FUSED_PROVIDER`)
 - **Kalman sensor fusion in C++/NDK** — smooths GPS jitter, rejects outliers, tightens accuracy (≈80% RMSE reduction when stationary, ≈47% while walking in our synthetic-track tests)
 - **Battery intelligence** — Activity Recognition + significant-motion sensor stop GPS while still, resume on movement
+- **Adaptive accuracy presets** (`eco` / `standard` / `high`) with optional **auto-degrade on low battery**
+- **Reliability signals** — mock-location (spoofing) detection, a per-fix **confidence score (0–100)**, and **signal-outage events**
+- **Trip & visit detection** (on-device stay-point algorithm) — turns raw points into `onVisit` (arrive/depart with dwell) and `onTrip` (with real travelled distance) events
+- **Driving-behaviour events** (telematics-style, on-device) — harsh braking, harsh acceleration, speeding and idling from the accelerometer + GPS, with a severity score
 - **Geofencing** — circular *and* polygon geofences, "infinite" geofences (nearest-100 reconciliation), ENTER / EXIT / DWELL
 - **Offline persistence** (SQLite) + **batched HTTP sync** with retry/backoff (WorkManager)
 - **Restart on boot** (persisted config) and a headless-safe data pipeline (buffer + sync without a JS runtime)
@@ -140,14 +144,26 @@ sub.remove();
 - `addGeofence(geofence)` · `addGeofences(list)` · `removeGeofence(id)` · `removeGeofences()` · `getGeofences()`
 - A geofence is a **circle** (`latitude`, `longitude`, `radius`) or a **polygon** (`vertices: [lat, lng][]`).
 
+### Trips & visits
+- Enable with `enableTripDetection: true` (tune via `visitRadius`, `minVisitDwell`).
+- `getActiveTrip(): Promise<Trip | null>` — the trip currently in progress.
+- Subscribe with `onVisit` (`{ action: 'arrive' | 'depart', visit }`) and `onTrip` (`{ action: 'start' | 'end', trip }`).
+
+### Driving events
+- Enable with `enableDrivingEvents: true` (tune `harshAccelThreshold`, `harshBrakeThreshold`, `speedLimit`, `idleTimeout`).
+- Subscribe with `onDrivingEvent` — `{ type: 'harsh_braking' | 'harsh_acceleration' | 'speeding' | 'idling', severity, magnitude, speed, location }`.
+
 ### Persistence & sync
 - `getLocations(): Promise<Location[]>` · `getCount(): Promise<number>` · `destroyLocations()` · `sync(): Promise<Location[]>`
 
+### Testing
+- `simulateLocation({ latitude, longitude, accuracy?, speed?, timestamp? })` — inject a fix through the full pipeline (fusion, geofences, trips/visits) to test from your desk without walking a route. Pass increasing `timestamp` values to simulate motion.
+
 ### Events (each returns an `EventSubscription`)
-`onLocation` · `onMotionChange` · `onActivityChange` · `onGeofence` · `onProviderChange` · `onHeartbeat` · `onError`
+`onLocation` · `onMotionChange` · `onActivityChange` · `onGeofence` · `onProviderChange` · `onHeartbeat` · `onError` · `onVisit` · `onTrip` · `onDrivingEvent`
 
 ### Config highlights
-`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `stationaryRadius` · `enableKalman` · `accuracyFilter` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` / `maxRecordsToPersist` · `notification`.
+`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `preset` (`eco|standard|high`) · `lowBatteryThreshold` · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `disableMockLocations` · `outageThreshold` · `enableTripDetection` / `visitRadius` / `minVisitDwell` · `enableKalman` · `accuracyFilter` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` · `notification`.
 
 ---
 

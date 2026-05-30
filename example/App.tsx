@@ -28,6 +28,13 @@ export default function App() {
       );
     });
     const errorSub = GeoPulse.onError((error) => append(`⚠️ ${error.code}: ${error.message}`));
+    const drivingSub = GeoPulse.onDrivingEvent((e) =>
+      append(`🚗 ${e.type} [${e.severity}] ${e.magnitude.toFixed(1)}`)
+    );
+    const tripSub = GeoPulse.onTrip((e) =>
+      append(`🛣️ trip ${e.action} ${e.trip.distanceMeters.toFixed(0)}m`)
+    );
+    const visitSub = GeoPulse.onVisit((e) => append(`📌 visit ${e.action}`));
 
     GeoPulse.ready({
       desiredAccuracy: Accuracy.High,
@@ -45,6 +52,9 @@ export default function App() {
     return () => {
       locationSub.remove();
       errorSub.remove();
+      drivingSub.remove();
+      tripSub.remove();
+      visitSub.remove();
     };
   }, []);
 

@@ -8,10 +8,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.core.PermissionsManager
+import expo.modules.geopulse.driving.DrivingEventsManager
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.motion.MotionManager
 
@@ -27,10 +31,24 @@ class LocationService : Service() {
   companion object {
     private const val CHANNEL_ID = "geopulse_tracking"
     private const val NOTIFICATION_ID = 48151623
+    private const val WATCHDOG_INTERVAL_MS = 10_000L
   }
 
   private var engine: LocationEngine? = null
   private var motion: MotionManager? = null
+  private var driving: DrivingEventsManager? = null
+
+  // Outage watchdog: detects signal loss (tunnel, indoors) and recovery.
+  private val watchdogHandler = Handler(Looper.getMainLooper())
+  private var lastFixElapsed = 0L
+  private var outageActive = false
+  private var paused = false
+  private val watchdogTick = object : Runnable {
+    override fun run() {
+      checkOutage()
+      watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -39,6 +57,35 @@ class LocationService : Service() {
     startTracking()
     // START_STICKY: the OS restarts the service if it is killed while tracking.
     return START_STICKY
+  }
+
+  private fun outageThresholdMs(): Long {
+    val cfg = GeoPulseController.config
+    return if (cfg.outageThreshold > 0) {
+      cfg.outageThreshold
+    } else {
+      (cfg.locationUpdateInterval * 3).coerceAtLeast(30_000)
+    }
+  }
+
+  private fun checkOutage() {
+    // While paused for being stationary, "no fixes" is expected — not an outage.
+    if (paused || lastFixElapsed == 0L) return
+    val silence = SystemClock.elapsedRealtime() - lastFixElapsed
+    if (!outageActive && silence >= outageThresholdMs()) {
+      outageActive = true
+      GeoPulseController.notifyOutage(active = true, durationMs = silence)
+    }
+  }
+
+  private fun onFixReceived() {
+    val now = SystemClock.elapsedRealtime()
+    if (outageActive) {
+      val duration = now - lastFixElapsed
+      outageActive = false
+      GeoPulseController.notifyOutage(active = false, durationMs = duration)
+    }
+    lastFixElapsed = now
   }
 
   private fun startTracking() {
@@ -52,6 +99,31 @@ class LocationService : Service() {
     }
     resumeLocationUpdates()
     startMotionDetection()
+    startDrivingDetection()
+    watchdogHandler.removeCallbacks(watchdogTick)
+    watchdogHandler.postDelayed(watchdogTick, WATCHDOG_INTERVAL_MS)
+  }
+
+  private fun startDrivingDetection() {
+    val cfg = GeoPulseController.config
+    if (!cfg.enableDrivingEvents) return
+    val manager = DrivingEventsManager(
+      applicationContext,
+      cfg.harshAccelThreshold,
+      cfg.harshBrakeThreshold,
+      cfg.speedLimit,
+      cfg.idleTimeout,
+      cfg.drivingMinSpeed,
+    )
+    manager.listener = object : DrivingEventsManager.Listener {
+      override fun onDrivingEvent(type: String, severity: String, magnitude: Double, speedMps: Double) {
+        GeoPulseController.notifyDrivingEvent(type, severity, magnitude, speedMps)
+      }
+    }
+    driving = manager
+    manager.start()
+    // Route GPS speed from the location pipeline into the detector.
+    GeoPulseController.drivingSpeedSink = { speed -> driving?.onSpeed(speed) }
   }
 
   private fun startMotionDetection() {
@@ -73,20 +145,28 @@ class LocationService : Service() {
   }
 
   private fun resumeLocationUpdates() {
+    paused = false
+    lastFixElapsed = SystemClock.elapsedRealtime() // grace period before flagging an outage
     val eng = engine ?: LocationEngine(applicationContext).also { engine = it }
     eng.start(GeoPulseController.config) { location ->
+      onFixReceived()
       GeoPulseController.onLocationUpdate(location)
     }
   }
 
   private fun pauseLocationUpdates() {
+    paused = true
     engine?.stop()
   }
 
   private fun teardown() {
+    watchdogHandler.removeCallbacks(watchdogTick)
     motion?.stop()
     motion = null
     MotionManager.activeListener = null
+    driving?.stop()
+    driving = null
+    GeoPulseController.drivingSpeedSink = null
     engine?.stop()
     engine = null
   }

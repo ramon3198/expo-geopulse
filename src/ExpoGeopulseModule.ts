@@ -8,6 +8,7 @@ import type {
   Geofence,
   PermissionStatus,
   GeoPulseEvents,
+  Trip,
 } from './ExpoGeopulse.types';
 
 /**
@@ -44,6 +45,9 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   removeGeofences(): Promise<void>;
   getGeofences(): Promise<Geofence[]>;
 
+  // trip & visit
+  getActiveTrip(): Promise<Trip | null>;
+
   // persistence + sync (M5)
   getLocations(): Promise<Location[]>;
   getCount(): Promise<number>;
@@ -56,6 +60,14 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
 
   // debug — emits a synthetic `onLocation` to validate the JS event pipeline
   emitTestLocation(): void;
+  // testing — inject a fix through the full pipeline (fusion, trips, geofences)
+  simulateLocation(location: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    speed?: number;
+    timestamp?: number;
+  }): Promise<void>;
 }
 
 export default requireNativeModule<ExpoGeopulseModule>('ExpoGeopulse');

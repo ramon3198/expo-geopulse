@@ -31,9 +31,33 @@ class GeoPulseConfig : Record {
   @Field var locationUpdateInterval: Long = 5_000
   @Field var fastestLocationUpdateInterval: Long = 1_000
 
+  // adaptive accuracy preset: "" (manual), "eco", "standard", "high".
+  // When set, it overrides the three fields above via resolvePreset().
+  @Field var preset: String = ""
+  // Auto-degrade to the eco preset when battery is at/below this level (0..1). 0 disables.
+  @Field var lowBatteryThreshold: Double = 0.0
+
   // battery intelligence
   @Field var stopOnStationary: Boolean = true
   @Field var stationaryRadius: Double = 50.0
+
+  // reliability
+  @Field var disableMockLocations: Boolean = false
+  // Emit an outage event when no fix arrives for this long (ms). 0 = auto (3x interval, min 30s).
+  @Field var outageThreshold: Long = 0
+
+  // trip & visit detection
+  @Field var enableTripDetection: Boolean = false
+  @Field var visitRadius: Double = 100.0       // cluster radius (m) for a stay-point
+  @Field var minVisitDwell: Long = 180_000     // min dwell (ms) to confirm a visit (3 min)
+
+  // driving-behaviour events
+  @Field var enableDrivingEvents: Boolean = false
+  @Field var harshAccelThreshold: Double = 3.0   // m/s^2
+  @Field var harshBrakeThreshold: Double = 3.5   // m/s^2
+  @Field var speedLimit: Double = 0.0            // m/s; 0 disables speeding detection
+  @Field var idleTimeout: Long = 180_000         // ms of near-zero speed -> idling (3 min)
+  @Field var drivingMinSpeed: Double = 2.0       // min GPS speed (m/s) before accel events count; 0 = always
 
   // accuracy / fusion
   @Field var enableKalman: Boolean = true
@@ -59,13 +83,56 @@ class GeoPulseConfig : Record {
   @Field var logLevel: Int = 3
   @Field var notification: NotificationConfig? = null
 
+  /**
+   * Applies the named accuracy preset (eco / standard / high) to the tracking
+   * fields, or — when battery-low auto-degrade kicks in — forces the eco preset.
+   * No-op when [preset] is blank and [forceEco] is false. Returns this config.
+   */
+  fun resolvePreset(forceEco: Boolean = false): GeoPulseConfig {
+    val name = if (forceEco) "eco" else preset.lowercase()
+    when (name) {
+      "eco" -> {
+        desiredAccuracy = Accuracy.LOW
+        distanceFilter = 50.0
+        locationUpdateInterval = 30_000
+        fastestLocationUpdateInterval = 15_000
+      }
+      "standard" -> {
+        desiredAccuracy = Accuracy.BALANCED
+        distanceFilter = 25.0
+        locationUpdateInterval = 10_000
+        fastestLocationUpdateInterval = 5_000
+      }
+      "high" -> {
+        desiredAccuracy = Accuracy.HIGH
+        distanceFilter = 10.0
+        locationUpdateInterval = 5_000
+        fastestLocationUpdateInterval = 1_000
+      }
+    }
+    return this
+  }
+
   fun toMap(): Map<String, Any?> = mapOf(
     "desiredAccuracy" to desiredAccuracy,
     "distanceFilter" to distanceFilter,
     "locationUpdateInterval" to locationUpdateInterval,
     "fastestLocationUpdateInterval" to fastestLocationUpdateInterval,
+    "preset" to preset,
+    "lowBatteryThreshold" to lowBatteryThreshold,
     "stopOnStationary" to stopOnStationary,
     "stationaryRadius" to stationaryRadius,
+    "disableMockLocations" to disableMockLocations,
+    "outageThreshold" to outageThreshold,
+    "enableTripDetection" to enableTripDetection,
+    "visitRadius" to visitRadius,
+    "minVisitDwell" to minVisitDwell,
+    "enableDrivingEvents" to enableDrivingEvents,
+    "harshAccelThreshold" to harshAccelThreshold,
+    "harshBrakeThreshold" to harshBrakeThreshold,
+    "speedLimit" to speedLimit,
+    "idleTimeout" to idleTimeout,
+    "drivingMinSpeed" to drivingMinSpeed,
     "enableKalman" to enableKalman,
     "accuracyFilter" to accuracyFilter,
     "enableHeadless" to enableHeadless,
@@ -100,8 +167,21 @@ class GeoPulseConfig : Record {
       (map["distanceFilter"] as? Number)?.let { c.distanceFilter = it.toDouble() }
       (map["locationUpdateInterval"] as? Number)?.let { c.locationUpdateInterval = it.toLong() }
       (map["fastestLocationUpdateInterval"] as? Number)?.let { c.fastestLocationUpdateInterval = it.toLong() }
+      (map["preset"] as? String)?.let { c.preset = it }
+      (map["lowBatteryThreshold"] as? Number)?.let { c.lowBatteryThreshold = it.toDouble() }
       (map["stopOnStationary"] as? Boolean)?.let { c.stopOnStationary = it }
       (map["stationaryRadius"] as? Number)?.let { c.stationaryRadius = it.toDouble() }
+      (map["disableMockLocations"] as? Boolean)?.let { c.disableMockLocations = it }
+      (map["outageThreshold"] as? Number)?.let { c.outageThreshold = it.toLong() }
+      (map["enableTripDetection"] as? Boolean)?.let { c.enableTripDetection = it }
+      (map["visitRadius"] as? Number)?.let { c.visitRadius = it.toDouble() }
+      (map["minVisitDwell"] as? Number)?.let { c.minVisitDwell = it.toLong() }
+      (map["enableDrivingEvents"] as? Boolean)?.let { c.enableDrivingEvents = it }
+      (map["harshAccelThreshold"] as? Number)?.let { c.harshAccelThreshold = it.toDouble() }
+      (map["harshBrakeThreshold"] as? Number)?.let { c.harshBrakeThreshold = it.toDouble() }
+      (map["speedLimit"] as? Number)?.let { c.speedLimit = it.toDouble() }
+      (map["idleTimeout"] as? Number)?.let { c.idleTimeout = it.toLong() }
+      (map["drivingMinSpeed"] as? Number)?.let { c.drivingMinSpeed = it.toDouble() }
       (map["enableKalman"] as? Boolean)?.let { c.enableKalman = it }
       (map["accuracyFilter"] as? Number)?.let { c.accuracyFilter = it.toDouble() }
       (map["enableHeadless"] as? Boolean)?.let { c.enableHeadless = it }

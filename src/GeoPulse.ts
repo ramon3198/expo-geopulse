@@ -14,6 +14,10 @@ import type {
   ProviderChangeEvent,
   HeartbeatEvent,
   GeoPulseError,
+  VisitEvent,
+  TripEvent,
+  Trip,
+  DrivingEvent,
 } from './ExpoGeopulse.types';
 
 /**
@@ -105,6 +109,13 @@ class GeoPulse {
     return NativeModule.getGeofences();
   }
 
+  // ---- trip & visit ----
+
+  /** The trip currently in progress (between two visits), or null. Requires `enableTripDetection`. */
+  getActiveTrip(): Promise<Trip | null> {
+    return NativeModule.getActiveTrip();
+  }
+
   // ---- persistence + sync ----
 
   getLocations(): Promise<Location[]> {
@@ -163,11 +174,42 @@ class GeoPulse {
     return NativeModule.addListener('onError', listener);
   }
 
-  // ---- debug ----
+  /** Fires on visit arrival/departure (stay-points). Requires `enableTripDetection`. */
+  onVisit(listener: (event: VisitEvent) => void): EventSubscription {
+    return NativeModule.addListener('onVisit', listener);
+  }
+
+  /** Fires on trip start/end (journey between visits). Requires `enableTripDetection`. */
+  onTrip(listener: (event: TripEvent) => void): EventSubscription {
+    return NativeModule.addListener('onTrip', listener);
+  }
+
+  /** Fires on harsh braking/acceleration, speeding or idling. Requires `enableDrivingEvents`. */
+  onDrivingEvent(listener: (event: DrivingEvent) => void): EventSubscription {
+    return NativeModule.addListener('onDrivingEvent', listener);
+  }
+
+  // ---- debug / testing ----
 
   /** Emit a synthetic `onLocation` event. Useful to validate wiring end-to-end. */
   emitTestLocation(): void {
     NativeModule.emitTestLocation();
+  }
+
+  /**
+   * Inject a fix through the full pipeline (Kalman, trips/visits, geofences,
+   * persistence) as if it came from GPS. A testing aid for exercising geofences
+   * and trip/visit logic without walking a route. Pass increasing `timestamp`
+   * values (epoch ms) to simulate motion over time.
+   */
+  simulateLocation(location: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    speed?: number;
+    timestamp?: number;
+  }): Promise<void> {
+    return NativeModule.simulateLocation(location);
   }
 }
 

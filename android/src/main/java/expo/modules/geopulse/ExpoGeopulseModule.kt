@@ -26,6 +26,9 @@ class ExpoGeopulseModule : Module() {
       "onProviderChange",
       "onHeartbeat",
       "onError",
+      "onVisit",
+      "onTrip",
+      "onDrivingEvent",
     )
 
     OnCreate {
@@ -147,6 +150,12 @@ class ExpoGeopulseModule : Module() {
       promise.resolve(controller.getGeofences())
     }
 
+    // ---- trip & visit ----
+
+    AsyncFunction("getActiveTrip") { promise: Promise ->
+      promise.resolve(controller.getActiveTrip())
+    }
+
     // ---- persistence + sync (M5) ----
 
     AsyncFunction("getLocations") { promise: Promise ->
@@ -185,6 +194,23 @@ class ExpoGeopulseModule : Module() {
 
     Function("emitTestLocation") {
       controller.emitTestLocation()
+    }
+
+    AsyncFunction("simulateLocation") { location: Map<String, Any?>, promise: Promise ->
+      val lat = (location["latitude"] as? Number)?.toDouble()
+      val lng = (location["longitude"] as? Number)?.toDouble()
+      if (lat == null || lng == null) {
+        promise.reject(CodedException("simulateLocation requires latitude and longitude."))
+      } else {
+        controller.simulateLocation(
+          latitude = lat,
+          longitude = lng,
+          accuracy = (location["accuracy"] as? Number)?.toDouble() ?: 5.0,
+          speed = (location["speed"] as? Number)?.toDouble() ?: 0.0,
+          timestamp = (location["timestamp"] as? Number)?.toLong() ?: 0L,
+        )
+        promise.resolve(null)
+      }
     }
   }
 }
