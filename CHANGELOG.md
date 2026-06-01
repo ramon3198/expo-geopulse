@@ -4,11 +4,19 @@
 
 ### Bug fixes
 
+- **Fusion native handle is now race-free.** Rebuilding the Kalman engine (on a
+  `setConfig` that changes accuracy) freed the native handle while the location
+  worker thread could be mid-`process()` — a use-after-free / native crash. All
+  native-handle access (create / process / reset / destroy) is now serialized
+  under a single lock.
 - **`setConfig` no longer mutates the live config in place.** It merged onto the
   shared config object and returned the same instance, so the location worker
   thread could read a half-applied (or, for 64-bit fields, torn) config. Changes
   are now computed on a copy and published atomically via a `@Volatile`
   reference. The battery auto-degrade path got the same treatment.
+- **No stray fix after `stop()`.** The location engine stops with `quitSafely()`,
+  which can still deliver an already-queued fix; the service now drops fixes once
+  tracking is disabled, so nothing is emitted or persisted after `stop()`.
 - **Presets and manual tuning no longer fight.** `setConfig({ distanceFilter })`
   while a preset was active was silently overwritten by the preset. Hand-tuning a
   preset-controlled field now drops to manual mode so the change sticks;

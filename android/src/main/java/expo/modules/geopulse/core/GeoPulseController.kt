@@ -69,6 +69,10 @@ object GeoPulseController {
   private var lastLocation: Map<String, Any?>? = null
   private var lastAndroidLocation: Location? = null
   private var fusion: KalmanBridge? = null
+  // Serializes all native-handle access (create / process / reset / destroy) so
+  // a config-driven rebuild on one thread can't free the handle while the
+  // location worker thread is mid-process() — that would be a use-after-free.
+  private val fusionLock = Any()
 
   private val ioExecutor = Executors.newSingleThreadExecutor()
   private var store: LocationStore? = null
@@ -143,7 +147,7 @@ object GeoPulseController {
 
   fun stop() {
     enabled = false
-    fusion?.reset()
+    synchronized(fusionLock) { fusion?.reset() }
     tripManager?.reset()
     val ctx = appContext ?: return
     ctx.stopService(Intent(ctx, LocationService::class.java))
@@ -176,9 +180,8 @@ object GeoPulseController {
     var filtered = false
     var provider = location.provider ?: "fused"
 
-    val engine = ensureFusion(cfg)
-    if (engine != null) {
-      val r = engine.process(lat, lng, accuracy, location.time)
+    val r = fuse(cfg, lat, lng, accuracy, location.time)
+    if (r != null) {
       if (!r.accepted) return // outlier or below accuracy threshold -> drop
       lat = r.latitude
       lng = r.longitude
@@ -400,6 +403,22 @@ object GeoPulseController {
     }
   }
 
+  /**
+   * Runs a fix through the fusion engine under [fusionLock] so it can't race a
+   * rebuild/destroy on another thread. Returns null when no native engine is
+   * available (caller then applies the Kotlin accuracy gate).
+   */
+  private fun fuse(
+    cfg: GeoPulseConfig,
+    lat: Double,
+    lng: Double,
+    accuracy: Double,
+    timeMs: Long,
+  ): KalmanBridge.Result? = synchronized(fusionLock) {
+    ensureFusion(cfg)?.process(lat, lng, accuracy, timeMs)
+  }
+
+  /** Must be called while holding [fusionLock]. */
   private fun ensureFusion(cfg: GeoPulseConfig): KalmanBridge? {
     fusion?.let { return it }
     if (!KalmanBridge.isAvailable()) return null
@@ -411,7 +430,7 @@ object GeoPulseController {
     }
   }
 
-  private fun rebuildFusion() {
+  private fun rebuildFusion() = synchronized(fusionLock) {
     fusion?.destroy()
     fusion = null
   }

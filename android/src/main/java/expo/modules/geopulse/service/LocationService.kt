@@ -149,6 +149,9 @@ class LocationService : Service() {
     lastFixElapsed = SystemClock.elapsedRealtime() // grace period before flagging an outage
     val eng = engine ?: LocationEngine(applicationContext).also { engine = it }
     eng.start(GeoPulseController.config) { location ->
+      // Ignore any fix drained from the engine's queue after tracking stopped
+      // (LocationEngine.stop() uses quitSafely(), which delivers pending fixes).
+      if (!GeoPulseController.enabled) return@start
       onFixReceived()
       GeoPulseController.onLocationUpdate(location)
     }
