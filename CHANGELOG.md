@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.2.0
+
+High-level, "just works" developer experience (inspired by Python SDKs), layered
+on top of the full API — nothing removed, everything backward-compatible.
+
+### New features
+
+- **`GeoPulse.track(onLocation, options?)`** — start tracking in one call: requests
+  permissions, turns on GPS, configures, starts the foreground service and streams
+  locations. Returns `{ stop() }`. Throws coded errors (`PERMISSION_DENIED` / `LOCATION_OFF`).
+- **`GeoPulse.ensurePermissions({ background })`** — runs the full foreground → GPS →
+  background permission flow and reports `{ granted, reason, ... }`.
+- **`GeoPulse.on(event, cb)`** — one typed subscriber for every event
+  (`'location' | 'motion' | 'activity' | 'geofence' | 'provider' | 'heartbeat' | 'error' | 'visit' | 'trip' | 'driving'`).
+- **`GeoPulse.currentPosition()`** — short alias for `getCurrentPosition()`.
+- **Friendly presets** — `mode: 'eco' | 'balanced' | 'high'` instead of the `Accuracy` enum.
+
+## 0.1.0
 
 First public preview. Android only.
 
