@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit
 object GeoPulseController {
   private const val MAX_SPEED_MPS = 100.0
   private const val PROCESS_NOISE = 3.0
+  private const val DEFAULT_GET_LIMIT = 1000
 
   private var dispatcher: EventDispatcher? = null
   private var appContext: Context? = null
@@ -430,14 +431,18 @@ object GeoPulseController {
     }
   }
 
-  fun getLocations(onResult: (List<Map<String, Any?>>) -> Unit) {
+  fun getLocations(limit: Int, onResult: (List<Map<String, Any?>>) -> Unit) {
     val locationStore = store()
     if (locationStore == null) {
       onResult(emptyList())
       return
     }
+    // Cap the default so a large buffer never floods the JS bridge in one call.
+    val effectiveLimit = if (limit > 0) limit else DEFAULT_GET_LIMIT
     ioExecutor.execute {
-      val list = runCatching { locationStore.getAll(0).map { Json.toMap(it.json) } }
+      // getLatest: most recent N, in chronological order (callers want the
+      // latest track, not the oldest backlog).
+      val list = runCatching { locationStore.getLatest(effectiveLimit).map { Json.toMap(it.json) } }
         .getOrDefault(emptyList())
       onResult(list)
     }

@@ -158,8 +158,8 @@ class ExpoGeopulseModule : Module() {
 
     // ---- persistence + sync (M5) ----
 
-    AsyncFunction("getLocations") { promise: Promise ->
-      controller.getLocations { promise.resolve(it) }
+    AsyncFunction("getLocations") { limit: Int, promise: Promise ->
+      controller.getLocations(limit) { promise.resolve(it) }
     }
 
     AsyncFunction("getCount") { promise: Promise ->

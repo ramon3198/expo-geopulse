@@ -19,6 +19,12 @@ First public preview. Android only.
 - **Restart on boot** from persisted config; headless-safe buffer + sync pipeline.
 - **Expo config plugin** that injects permissions; **TypeScript-first** public API with strongly-typed events.
 
+### Performance
+
+- `SyncWorker` now drains the whole backlog in one run (looping over batches) and reserves WorkManager's exponential backoff for real HTTP failures, instead of treating "more rows pending" as a retry.
+- SQLite trimming runs periodically (every 50 inserts) rather than after every insert.
+- `getLocations(limit?)` is capped (default 1000) and now returns the **most recent** locations (chronological), via a dedicated `getLatest()` query, rather than the oldest backlog. The sync worker keeps using FIFO order.
+
 ### Others
 
 - Targets the React Native New Architecture (Expo SDK 53+ / RN 0.76+).

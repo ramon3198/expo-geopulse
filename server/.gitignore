@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data & logs
+geopulse.db
+*.log
+
+# Built APK served for install (a build artifact, not source — 69 MB)
+static/*.apk

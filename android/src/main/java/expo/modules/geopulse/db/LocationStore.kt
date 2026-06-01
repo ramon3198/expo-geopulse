@@ -33,6 +33,8 @@ class LocationStore(context: Context) :
     onCreate(db)
   }
 
+  private var insertsSinceTrim = 0
+
   @Synchronized
   fun insert(uuid: String, timestamp: Long, json: String, maxRecords: Int) {
     val db = writableDatabase
@@ -42,8 +44,12 @@ class LocationStore(context: Context) :
       put("json", json)
     }
     db.insert(TABLE, null, values)
-    if (maxRecords > 0) {
-      // Trim oldest rows beyond the cap (maxRecords is an int we control).
+
+    // Trimming on every insert is wasteful. Only run the DELETE periodically
+    // (every TRIM_EVERY inserts) — the table can briefly exceed maxRecords by at
+    // most TRIM_EVERY rows, which is harmless.
+    if (maxRecords > 0 && ++insertsSinceTrim >= TRIM_EVERY) {
+      insertsSinceTrim = 0
       db.execSQL(
         "DELETE FROM $TABLE WHERE id NOT IN " +
           "(SELECT id FROM $TABLE ORDER BY id DESC LIMIT $maxRecords)",
@@ -51,6 +57,10 @@ class LocationStore(context: Context) :
     }
   }
 
+  /**
+   * Oldest-first (FIFO) up to [limit] rows. Used by the sync worker, which must
+   * upload locations in the order they were recorded.
+   */
   @Synchronized
   fun getAll(limit: Int): List<Record> {
     val sql = buildString {
@@ -63,6 +73,28 @@ class LocationStore(context: Context) :
         records.add(Record(cursor.getLong(0), cursor.getString(1)))
       }
     }
+    return records
+  }
+
+  /**
+   * The most recent [limit] rows, returned in chronological (oldest-first) order.
+   * Used by `getLocations()` where callers expect the *latest* track, not the
+   * oldest backlog.
+   */
+  @Synchronized
+  fun getLatest(limit: Int): List<Record> {
+    val sql = buildString {
+      append("SELECT id, json FROM $TABLE ORDER BY id DESC")
+      if (limit > 0) append(" LIMIT $limit")
+    }
+    val records = mutableListOf<Record>()
+    readableDatabase.rawQuery(sql, null).use { cursor ->
+      while (cursor.moveToNext()) {
+        records.add(Record(cursor.getLong(0), cursor.getString(1)))
+      }
+    }
+    // Query was newest-first for the LIMIT; flip back to chronological.
+    records.reverse()
     return records
   }
 
@@ -90,5 +122,6 @@ class LocationStore(context: Context) :
     private const val DB_NAME = "geopulse.db"
     private const val DB_VERSION = 1
     private const val TABLE = "locations"
+    private const val TRIM_EVERY = 50
   }
 }

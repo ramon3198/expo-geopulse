@@ -49,7 +49,7 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   getActiveTrip(): Promise<Trip | null>;
 
   // persistence + sync (M5)
-  getLocations(): Promise<Location[]>;
+  getLocations(limit: number): Promise<Location[]>;
   getCount(): Promise<number>;
   destroyLocations(): Promise<void>;
   sync(): Promise<Location[]>;

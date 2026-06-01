@@ -78,6 +78,19 @@ npx expo prebuild --platform android
 npx expo run:android
 ```
 
+> **Building the bundled `example/` in release mode (repo only):** the example
+> resolves `expo-geopulse` from the parent dir via Metro's `extraNodeModules`,
+> which works for debug but not for the release JS bundler. If you build a
+> *release* APK of the example, first link the package into the example so the
+> bundler can resolve it:
+> ```bash
+> # from expo-geopulse/example
+> cmd /c mklink /J node_modules\expo-geopulse ..   # Windows (junction)
+> # ln -s .. node_modules/expo-geopulse            # macOS/Linux
+> ```
+> This is only needed for the in-repo example; consumers installing from npm
+> don't need it.
+
 ### Config plugin options
 
 | Option | Default | Description |
@@ -175,6 +188,32 @@ sub.remove();
 - **MotionManager** uses Activity Recognition transitions + the significant-motion sensor; when `stopOnStationary` is on, GPS is stopped while still and resumed on movement.
 - **Offline pipeline**: every location is buffered in SQLite; a WorkManager job uploads batches to `url` with retry/backoff and deletes them on success.
 - **Boot**: the last config is persisted; if `startOnBoot` is set, tracking resumes after a reboot without opening the app.
+
+---
+
+## Companion backend & dashboard (optional)
+
+The repo ships an optional open-source real-time backend and dashboard so you can
+*see* tracking on a live map — point the SDK's `url` at it and you're done.
+
+- **`server/`** — a **FastAPI + WebSocket** backend (SQLite storage). Receives the
+  SDK's batches, stores them, and streams every location/event to connected
+  dashboards. See [server/README.md](server/README.md).
+- **`dashboard/`** — a **React + Vite + MapLibre** dashboard (free OpenStreetMap
+  tiles, no API key) that shows the device moving live, the route trace, and a
+  feed of trips / visits / driving events.
+
+```bash
+# 1. Backend
+cd server && pip install -r requirements.txt && uvicorn main:app --port 8787
+# 2. Dashboard
+cd dashboard && npm install && npm run dev
+# 3. Test without a phone
+cd server && python simulate.py        # watch the map move
+
+# Or point the SDK at it:
+# await GeoPulse.ready({ url: 'http://YOUR_PC_IP:8787/locations', autoSync: true })
+```
 
 ---
 

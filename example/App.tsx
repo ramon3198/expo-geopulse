@@ -41,6 +41,18 @@ export default function App() {
       distanceFilter: 10,
       stopOnStationary: true,
       enableKalman: true,
+      // Trip/visit + driving detection on.
+      enableTripDetection: true,
+      enableDrivingEvents: true,
+      // Upload to the public backend over HTTPS (no LAN/USB needed).
+      url: 'https://gpsapi.carcamodev.site/locations',
+      autoSync: true,
+      autoSyncThreshold: 5, // upload every 5 locations (sensible default; 1 = each fix)
+      headers: { 'x-device-id': 'ramon-phone' },
+      notification: {
+        title: 'GeoPulse activo',
+        text: 'Registrando tu ubicación en segundo plano',
+      },
     })
       .then((state) => {
         setReady(true);

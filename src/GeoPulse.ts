@@ -118,8 +118,9 @@ class GeoPulse {
 
   // ---- persistence + sync ----
 
-  getLocations(): Promise<Location[]> {
-    return NativeModule.getLocations();
+  /** Returns buffered locations (chronological). `limit` 0 = the native default cap (1000). */
+  getLocations(limit = 0): Promise<Location[]> {
+    return NativeModule.getLocations(limit);
   }
 
   getCount(): Promise<number> {
