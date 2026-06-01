@@ -32,22 +32,43 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     }
     val url = config.url ?: return Result.success()
 
-    val store = LocationStore(applicationContext)
+    val store = LocationStore.getInstance(applicationContext)
     val batchSize = if (config.maxBatchSize > 0) config.maxBatchSize else 250
 
-    // Drain the whole backlog in this run: keep uploading batches while rows
-    // remain and uploads succeed. We only return retry() on a real HTTP failure
-    // (so WorkManager's exponential backoff is reserved for genuine errors, not
-    // for "there's simply more data to send"). MAX_BATCHES caps a single run.
-    repeat(MAX_BATCHES_PER_RUN) {
-      val batch = store.getAll(batchSize)
-      if (batch.isEmpty()) return Result.success()
+    // Serialize the whole drain with the manual sync() path so they can't claim
+    // and upload the same rows twice.
+    synchronized(LocationStore.syncLock) {
+      // Drain the whole backlog in this run: keep uploading batches while rows
+      // remain and uploads succeed. MAX_BATCHES caps a single run.
+      repeat(MAX_BATCHES_PER_RUN) {
+        val batch = store.getAll(batchSize)
+        if (batch.isEmpty()) return Result.success()
 
-      val body = "[" + batch.joinToString(",") { it.json } + "]"
-      val result = HttpUploader.upload(url, config.httpMethod, config.headers, body)
-      if (!result.success) return Result.retry()
+        val body = "[" + batch.joinToString(",") { it.json } + "]"
+        val result = HttpUploader.upload(url, config.httpMethod, config.headers, body)
+        if (!result.success) {
+          return if (isTransient(result.status)) {
+            // Network error / 5xx / 408 / 429: back off and retry the same batch.
+            Result.retry()
+          } else {
+            // Permanent client error (400/401/403/413/422/...). Retrying the same
+            // body would spin on backoff forever and wedge the whole pipeline, so
+            // surface it and stop; the batch stays buffered for the next trigger
+            // (or until the app fixes the cause, e.g. refreshes an expired token).
+            GeoPulseController.emit(
+              "onError",
+              mapOf(
+                "code" to "HTTP_ERROR",
+                "message" to "Sync rejected with HTTP ${result.status}",
+                "status" to result.status,
+              ),
+            )
+            Result.success()
+          }
+        }
 
-      store.deleteByIds(batch.map { it.id })
+        store.deleteByIds(batch.map { it.id })
+      }
     }
     // Hit the per-run cap with rows still pending but no upload error: this is
     // not a failure, so don't trigger WorkManager's exponential backoff. Enqueue
@@ -66,6 +87,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     }
     return Result.success()
   }
+
+  /** Transient = worth retrying with backoff: network error, 5xx, 408, 429. */
+  private fun isTransient(status: Int): Boolean =
+    status == 0 || status == 408 || status == 429 || status in 500..599
 
   companion object {
     const val UNIQUE_WORK_NAME = "geopulse-sync"

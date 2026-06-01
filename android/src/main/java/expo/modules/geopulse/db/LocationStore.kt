@@ -12,7 +12,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * Each row stores the location's JSON exactly as it is emitted to JS, so batch
  * upload is a trivial string join and no re-serialization is needed.
  */
-class LocationStore(context: Context) :
+class LocationStore private constructor(context: Context) :
   SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
 
   data class Record(val id: Long, val json: String)
@@ -130,5 +130,26 @@ class LocationStore(context: Context) :
     private const val TABLE = "locations"
     private const val TRIM_EVERY = 50
     private const val DELETE_CHUNK = 500 // stay under SQLite's ~999 variable cap
+
+    @Volatile private var instance: LocationStore? = null
+
+    /**
+     * Process-wide singleton. Two separate [SQLiteOpenHelper] instances would
+     * each open their own connection, so the per-method `@Synchronized` (which
+     * locks on `this`) would NOT mutually exclude the controller's IO executor
+     * from the WorkManager sync thread — causing SQLITE_BUSY and lost writes. A
+     * single shared helper makes `@Synchronized` actually serialize access.
+     */
+    fun getInstance(context: Context): LocationStore =
+      instance ?: synchronized(this) {
+        instance ?: LocationStore(context.applicationContext).also { instance = it }
+      }
+
+    /**
+     * Serializes a full read→upload→delete sync cycle across the manual `sync()`
+     * path and the WorkManager [SyncWorker], so they can't both claim and upload
+     * the same rows (duplicate uploads).
+     */
+    val syncLock = Any()
   }
 }
