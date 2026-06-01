@@ -17,7 +17,10 @@
   is now restored on the next `start()` (and superseded by an explicit
   `ready()` / `setConfig()`); auto-degrade re-applies if the battery is still low.
   `setConfig` also merges onto the pre-degrade config rather than the temporary
-  eco one, so a partial update during a degrade can't freeze eco in place.
+  eco one, so a partial update during a degrade can't freeze eco in place. All
+  config + degrade-state transitions (`ready` / `setConfig` / `start` vs. the
+  auto-degrade on the worker thread) are serialized under a lock, so they can't
+  interleave into an inconsistent, unrecoverable state.
 - **`setConfig` now actually applies while tracking is running.** It updated the
   stored config but never reconfigured the live foreground service, so changing
   `preset` / intervals / `distanceFilter` left the real GPS request — and

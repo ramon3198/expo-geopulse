@@ -93,8 +93,10 @@ object GeoPulseController {
   // ---- configuration / lifecycle ----
 
   fun ready(cfg: GeoPulseConfig) {
-    config = cfg.resolvePreset()
-    clearBatteryDegradeState()
+    synchronized(configLock) {
+      config = cfg.resolvePreset()
+      clearBatteryDegradeState()
+    }
     rebuildFusion()
     persistConfig(config)
   }
@@ -107,16 +109,20 @@ object GeoPulseController {
     // auto-degrade re-apply from the new config if the battery is still low.
     // Compute on a fresh copy and publish it atomically via the @Volatile
     // `config` reference (the location worker thread reads it concurrently).
-    val base = preDegradeConfig ?: config
-    val merged = base.copy().applyMap(patch)
-    // If the caller hand-tuned a preset-controlled tracking field without also
-    // naming a preset, switch to manual mode so resolvePreset() below doesn't
-    // silently overwrite that change.
-    if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
-      merged.preset = ""
+    // The whole read-modify-write runs under configLock so it can't interleave
+    // with the auto-degrade on the worker thread.
+    synchronized(configLock) {
+      val base = preDegradeConfig ?: config
+      val merged = base.copy().applyMap(patch)
+      // If the caller hand-tuned a preset-controlled tracking field without also
+      // naming a preset, switch to manual mode so resolvePreset() below doesn't
+      // silently overwrite that change.
+      if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
+        merged.preset = ""
+      }
+      config = merged.resolvePreset()
+      clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
     }
-    config = merged.resolvePreset()
-    clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
     rebuildFusion()
     persistConfig(config)
     // Apply "while running": re-issue the GPS request and reconcile driving
@@ -147,9 +153,11 @@ object GeoPulseController {
     enabled = true
     // Fresh start at the configured accuracy: undo any prior battery auto-degrade
     // (it re-applies on the next fix if the battery is still low).
-    if (degradedForBattery) {
-      preDegradeConfig?.let { config = it }
-      clearBatteryDegradeState()
+    synchronized(configLock) {
+      if (degradedForBattery) {
+        preDegradeConfig?.let { config = it }
+        clearBatteryDegradeState()
+      }
     }
     launchService()
   }
@@ -202,7 +210,7 @@ object GeoPulseController {
     }
 
     // Battery-low auto-degrade: drop to the eco preset once below the threshold.
-    maybeDegradeForBattery(cfg)
+    maybeDegradeForBattery()
 
     var lat = location.latitude
     var lng = location.longitude
@@ -314,17 +322,33 @@ object GeoPulseController {
   // The config in effect just before a low-battery auto-degrade, so start() can
   // restore it (auto-degrade then re-applies on the next fix if still low).
   @Volatile private var preDegradeConfig: GeoPulseConfig? = null
+  // Serializes config + battery-degrade transitions across threads: ready /
+  // setConfig / start (JS thread) vs. this auto-degrade (location worker thread).
+  private val configLock = Any()
 
-  private fun maybeDegradeForBattery(cfg: GeoPulseConfig) {
-    if (cfg.lowBatteryThreshold <= 0.0 || degradedForBattery) return
+  private fun maybeDegradeForBattery() {
+    if (degradedForBattery) return
+    if (config.lowBatteryThreshold <= 0.0) return
     val ctx = appContext ?: return
     val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager ?: return
     val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
     if (level < 0) return
-    if (level / 100.0 <= cfg.lowBatteryThreshold && !bm.isCharging) {
-      preDegradeConfig = cfg
-      degradedForBattery = true
-      config = cfg.copy().resolvePreset(forceEco = true)
+    val degraded = synchronized(configLock) {
+      // Re-check under the lock; setConfig/start may have just run on another
+      // thread. Read the current config here so we degrade from the latest one.
+      val base = config
+      if (degradedForBattery || base.lowBatteryThreshold <= 0.0) {
+        false
+      } else if (level / 100.0 <= base.lowBatteryThreshold && !bm.isCharging) {
+        preDegradeConfig = base
+        degradedForBattery = true
+        config = base.copy().resolvePreset(forceEco = true)
+        true
+      } else {
+        false
+      }
+    }
+    if (degraded) {
       emit("onError", mapOf("code" to "BATTERY_LOW", "message" to "Tracking degraded to eco mode (battery $level%)."))
       // Re-apply the lighter LocationRequest immediately.
       launchService()
