@@ -59,7 +59,7 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
 
   // odometer
   getOdometer(): Promise<number>;
-  setOdometer(value: number): Promise<Location>;
+  setOdometer(value: number): Promise<Location | null>;
 
   // debug — emits a synthetic `onLocation` to validate the JS event pipeline
   emitTestLocation(): void;

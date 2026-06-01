@@ -46,6 +46,10 @@ class ExpoGeopulseModule : Module() {
     }
 
     OnDestroy {
+      // Settle a pending "enable location" promise so a runtime teardown while the
+      // system dialog is open doesn't leave ensurePermissions()/track() hanging.
+      enableLocationPromise?.resolve(false)
+      enableLocationPromise = null
       controller.detach()
     }
 
@@ -175,6 +179,8 @@ class ExpoGeopulseModule : Module() {
           if (activity == null) {
             promise.resolve(false)
           } else {
+            // Settle any orphaned prior request before overwriting it.
+            enableLocationPromise?.resolve(false)
             enableLocationPromise = promise
             try {
               resolvable.startResolutionForResult(activity, LocationSettings.REQUEST_CODE)
@@ -269,8 +275,9 @@ class ExpoGeopulseModule : Module() {
       promise.resolve(controller.odometer)
     }
 
-    AsyncFunction("setOdometer") { _: Double, promise: Promise ->
-      promise.reject(NotImplementedException("setOdometer"))
+    AsyncFunction("setOdometer") { value: Double, promise: Promise ->
+      controller.odometer = value
+      promise.resolve(controller.lastLocationMap())
     }
 
     // ---- debug ----

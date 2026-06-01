@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Hardening pass (multi-subsystem audit)
+
+- **Fusion core rejects bad inputs.** A single NaN/Inf fix used to poison the
+  Kalman state forever; duplicate or out-of-order timestamps collapsed the
+  variance (false over-confidence) and bypassed the speed gate. The fusion core
+  now drops non-finite inputs and any fix whose timestamp doesn't advance. The
+  JNI bridge also handles an OOM array allocation instead of crashing.
+- **`INTERNET` permission is now declared** (library manifest + config plugin).
+  HTTP sync silently failed on any consumer that didn't already carry it.
+- **Geofences keep reconciling after a process restart.** The reconciler is only
+  built on the JS path, so the boot/restart tracking path never re-selected the
+  nearest geofences. The location pipeline now drives it (lazily, only when
+  geofences exist), and reconciliation runs serialized on one thread, awaiting
+  the stale-removal before the add (no transient breach of the 100-geofence cap).
+- **Polygon geofence EXIT events fire again.** The point-in-polygon refinement
+  was applied to EXIT too, but a point leaving the bounding circle is outside the
+  polygon by definition — so every polygon EXIT was dropped. EXIT now passes through.
+- **Single SQLite store + serialized sync.** The controller and the WorkManager
+  worker each opened their own `LocationStore`, so the per-method locks didn't
+  mutually exclude them (SQLITE_BUSY, lost writes). The store is now a process
+  singleton, and the manual `sync()` and the worker share a lock so they can't
+  upload the same rows twice. Permanent HTTP 4xx no longer spins on backoff forever.
+- **Battery auto-degrade now recovers.** Eco mode stuck for the whole session;
+  it now restores the prior config once charging or back above the threshold
+  (with hysteresis).
+- **No hung `requestEnableLocation`.** A runtime teardown or a second call while
+  the system dialog was open left the promise (and `track()`) pending forever.
+- **`setOdometer` is implemented** (was a `NOT_IMPLEMENTED` stub).
+- **`track({ distanceFilter })` is honored** instead of being overwritten by the
+  preset.
+
+### Concurrency fixes
+
+- `@Volatile` on cross-thread state that lacked it: the outage-watchdog fields,
+  `lastAndroidLocation`, and the driving detector's speed/brake trend (these were
+  read on a different thread than they were written, risking stale reads or torn
+  64-bit values). The motion and driving detectors now also fully reset on
+  `stop()` and guard against a sensor callback that fires after stop.
+- `launchService()` (config re-apply / battery degrade) is wrapped so a
+  background `ForegroundServiceStartNotAllowedException` can't crash the worker.
+
+### Trip accuracy
+
+- Trips now end at the arrival moment/place (not ~`minVisitDwell` later), and the
+  GPS jitter accumulated while parked is rolled back, so trip distance and
+  duration aren't inflated.
+
 ### Bug fixes
 
 - **Geofences survive a process restart.** The geofence registry lived only in

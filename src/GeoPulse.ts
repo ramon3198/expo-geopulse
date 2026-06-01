@@ -184,7 +184,8 @@ class GeoPulse {
     return NativeModule.getOdometer();
   }
 
-  setOdometer(value: number): Promise<Location> {
+  /** Set the running odometer (meters). Resolves with the last known location, or null if none yet. */
+  setOdometer(value: number): Promise<Location | null> {
     return NativeModule.setOdometer(value);
   }
 
@@ -269,10 +270,14 @@ class GeoPulse {
       throw err;
     }
 
+    // A hand-tuned distanceFilter implies manual mode: send it WITHOUT a preset,
+    // otherwise the native `ready()` resolves the preset and overwrites it.
+    const manualDistance = options.distanceFilter != null;
     await this.ready({
       desiredAccuracy: MODE_TO_ACCURACY[mode],
-      preset: mode === 'balanced' ? 'standard' : mode,
-      distanceFilter: options.distanceFilter,
+      ...(manualDistance
+        ? { distanceFilter: options.distanceFilter }
+        : { preset: mode === 'balanced' ? 'standard' : mode }),
       enableTripDetection: options.trips,
       enableDrivingEvents: options.driving,
       url: options.url,
