@@ -1,6 +1,6 @@
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { MapStyleOption } from './config';
 import type { GeoLocation, VisitMarker } from './types';
@@ -79,6 +79,9 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const loadedRef = useRef(false);
   const fitKeyRef = useRef<string | null>(null);
+  // State (not just a ref) so the data/marker effect re-runs once the map is
+  // ready — otherwise a fix that arrives before 'load' never places the marker.
+  const [mapReady, setMapReady] = useState(false);
   // Latest props, so we can (re)paint data the moment the style finishes loading
   // even if it arrived before 'load' / after a style switch.
   const dataRef = useRef({ path, visits });
@@ -129,6 +132,7 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
         popup.remove();
       });
       loadedRef.current = true;
+      setMapReady(true);
       paintData(map); // paint any data that arrived before the map finished loading
     };
     map.on('load', onLoad);
@@ -150,18 +154,22 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
     const map = mapRef.current;
     if (!map || !loadedRef.current) return;
     loadedRef.current = false;
+    setMapReady(false);
     map.setStyle(style.url);
     map.once('styledata', () => {
       addOverlays(map);
       loadedRef.current = true;
+      setMapReady(true);
       paintData(map); // re-apply current data after the new style loads
     });
   }, [style.url]);
 
-  // Update route + live marker (with heading) + visit markers.
+  // Update route + live marker (with heading) + visit markers. Depends on
+  // `mapReady` so a fix that arrived before the map loaded still places the
+  // marker and fits bounds once the style is ready.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !loadedRef.current) return;
+    if (!map || !mapReady) return;
 
     const coords = path.map((p) => [p.coords.longitude, p.coords.latitude]);
     (map.getSource('route') as maplibregl.GeoJSONSource | undefined)?.setData({
@@ -215,7 +223,7 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
         map.easeTo({ center: lngLat, duration: 600 });
       }
     }
-  }, [path, last, visits, deviceKey, follow]);
+  }, [path, last, visits, deviceKey, follow, mapReady]);
 
   return <div ref={containerRef} className="map" />;
 }

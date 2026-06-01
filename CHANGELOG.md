@@ -8,8 +8,10 @@
   entire native config, so e.g. `setConfig({ preset: 'eco' })` silently wiped
   `url` / `autoSync` / trip & driving detection. Only the fields you pass are now
   applied; everything else is preserved.
-- **MapView (dashboard):** repaint current route/visits when the map style
-  finishes loading, so the initial track isn't lost on a data-before-load race.
+- **MapView (dashboard):** fully re-apply state when the map finishes loading —
+  not just the route/visits sources but the live marker, heading and
+  `fitBounds`. A fix that arrived before `load` (or after a style switch) now
+  places the marker and frames the track instead of being silently dropped.
 
 ### Others
 
