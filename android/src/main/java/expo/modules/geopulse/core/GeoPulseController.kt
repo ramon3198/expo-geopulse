@@ -113,6 +113,10 @@ object GeoPulseController {
     config = merged.resolvePreset()
     rebuildFusion()
     persistConfig(config)
+    // Apply "while running": re-issue the GPS request and reconcile driving
+    // detection on the live service (the API promises setConfig takes effect
+    // without a stop/start).
+    if (enabled) launchService()
   }
 
   private fun persistConfig(cfg: GeoPulseConfig) {
@@ -136,6 +140,15 @@ object GeoPulseController {
   fun start() {
     enabled = true
     degradedForBattery = false
+    launchService()
+  }
+
+  /**
+   * (Re)starts the foreground service. The service's `onStartCommand` re-applies
+   * the current config — re-issuing the GPS request and reconciling driving
+   * detection — so this doubles as "apply config to the running tracker".
+   */
+  private fun launchService() {
     val ctx = appContext ?: return
     val intent = Intent(ctx, LocationService::class.java)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -291,8 +304,7 @@ object GeoPulseController {
       config = cfg.copy().resolvePreset(forceEco = true)
       emit("onError", mapOf("code" to "BATTERY_LOW", "message" to "Tracking degraded to eco mode (battery $level%)."))
       // Re-apply the lighter LocationRequest immediately.
-      val intent = Intent(ctx, LocationService::class.java)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(intent) else ctx.startService(intent)
+      launchService()
     }
   }
 

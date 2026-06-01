@@ -4,6 +4,14 @@
 
 ### Bug fixes
 
+- **`setConfig` now actually applies while tracking is running.** It updated the
+  stored config but never reconfigured the live foreground service, so changing
+  `preset` / intervals / `distanceFilter` left the real GPS request — and
+  enabling/disabling `enableDrivingEvents` — on the value captured at `start()`.
+  `setConfig` now re-launches the service to re-issue the location request and
+  reconcile driving detection (honouring the stationary pause). Driving and
+  motion detectors are torn down before re-creation, fixing a duplicate-detector
+  leak on the battery auto-degrade restart too.
 - **Fusion native handle is now race-free.** Rebuilding the Kalman engine (on a
   `setConfig` that changes accuracy) freed the native handle while the location
   worker thread could be mid-`process()` — a use-after-free / native crash. All

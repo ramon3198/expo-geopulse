@@ -97,7 +97,9 @@ class LocationService : Service() {
       stopTrackingAndSelf()
       return
     }
-    resumeLocationUpdates()
+    // Don't force GPS back on if we're paused for being stationary (e.g. a
+    // re-launch to apply new config); the next motion-driven resume picks it up.
+    if (!paused) resumeLocationUpdates()
     startMotionDetection()
     startDrivingDetection()
     watchdogHandler.removeCallbacks(watchdogTick)
@@ -105,6 +107,11 @@ class LocationService : Service() {
   }
 
   private fun startDrivingDetection() {
+    // Idempotent: tear down any existing detector first, so this also applies a
+    // live config change that toggles or retunes driving events.
+    driving?.stop()
+    driving = null
+    GeoPulseController.drivingSpeedSink = null
     val cfg = GeoPulseController.config
     if (!cfg.enableDrivingEvents) return
     val manager = DrivingEventsManager(
@@ -127,6 +134,7 @@ class LocationService : Service() {
   }
 
   private fun startMotionDetection() {
+    motion?.stop() // idempotent: never leave a second detector running on restart
     MotionManager.activeListener = object : MotionManager.Listener {
       override fun onActivity(type: String, confidence: Int) {
         GeoPulseController.notifyActivity(type, confidence)
