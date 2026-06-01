@@ -13,3 +13,10 @@ __tests__
 /android/src/test/
 /android/build/
 /example/
+/dashboard/
+/server/
+/docs/
+
+# Build artifacts / host-only test, not needed by consumers
+**/tsconfig.tsbuildinfo
+/android/src/main/cpp/test_fusion.cpp

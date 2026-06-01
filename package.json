@@ -4,6 +4,21 @@
   "description": "Open-source background geolocation SDK for React Native + Expo (Android): fused location, Kalman sensor-fusion (C++/NDK), geofencing, battery-smart motion detection, offline sync.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
+  "files": [
+    "build",
+    "src",
+    "android/src",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "plugin/build/index.js",
+    "plugin/build/index.d.ts",
+    "app.plugin.js",
+    "expo-module.config.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "!android/src/main/cpp/test_fusion.cpp"
+  ],
   "scripts": {
     "build": "node internal/module_scripts/build.js",
     "clean": "node internal/module_scripts/clean.js",
