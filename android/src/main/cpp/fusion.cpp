@@ -38,20 +38,32 @@ FusionOutput SensorFusion::process(double latitude, double longitude,
                                    double accuracyMeters, long long timestampMs) {
   FusionOutput out{false, false, latitude, longitude, accuracyMeters};
 
+  // 0) Reject non-finite inputs. A single NaN/Inf would otherwise poison the
+  //    Kalman state forever (every later `x += gain*(v - NaN)` stays NaN).
+  if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+      !std::isfinite(accuracyMeters)) {
+    return out;  // rejected
+  }
+
   // 1) Accuracy gate.
   if (cfg_.accuracyFilter > 0.0 && accuracyMeters > cfg_.accuracyFilter) {
     return out;  // rejected
   }
 
-  // 2) Speed-based outlier rejection.
+  // 2) Reject duplicate / out-of-order fixes (timestamp not advancing). Without
+  //    this, a dt<=0 fix collapses the Kalman variance (false over-confidence)
+  //    and bypasses the speed gate while corrupting the reference point.
+  if (hasLast_ && timestampMs <= lastTimeMs_) {
+    return out;  // rejected
+  }
+
+  // 3) Speed-based outlier rejection (dt > 0 guaranteed by the check above).
   if (hasLast_) {
     long long dtMs = timestampMs - lastTimeMs_;
-    if (dtMs > 0) {
-      double meters = haversineMeters(lastLat_, lastLng_, latitude, longitude);
-      double speed = meters / (static_cast<double>(dtMs) / 1000.0);
-      if (speed > cfg_.maxSpeedMps) {
-        return out;  // physically implausible jump -> reject
-      }
+    double meters = haversineMeters(lastLat_, lastLng_, latitude, longitude);
+    double speed = meters / (static_cast<double>(dtMs) / 1000.0);
+    if (speed > cfg_.maxSpeedMps) {
+      return out;  // physically implausible jump -> reject
     }
   }
 

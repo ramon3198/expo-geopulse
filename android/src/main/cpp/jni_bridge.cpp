@@ -54,6 +54,7 @@ Java_expo_modules_geopulse_fusion_KalmanBridge_nativeProcess(
     result[4] = out.accuracy;
   }
   jdoubleArray array = env->NewDoubleArray(5);
+  if (array == nullptr) return nullptr;  // OOM: a pending exception is set
   env->SetDoubleArrayRegion(array, 0, 5, result);
   return array;
 }
