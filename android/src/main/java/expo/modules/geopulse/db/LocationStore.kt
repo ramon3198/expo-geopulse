@@ -108,9 +108,15 @@ class LocationStore(context: Context) :
   @Synchronized
   fun deleteByIds(ids: List<Long>) {
     if (ids.isEmpty()) return
-    val placeholders = ids.joinToString(",") { "?" }
-    val args = ids.map { it.toString() }.toTypedArray()
-    writableDatabase.delete(TABLE, "id IN ($placeholders)", args)
+    val db = writableDatabase
+    // SQLite caps bound variables (SQLITE_MAX_VARIABLE_NUMBER — 999 on older
+    // Android), so a large maxBatchSize would overflow a single IN (...) delete.
+    // Chunk to stay well under the limit.
+    ids.chunked(DELETE_CHUNK).forEach { chunk ->
+      val placeholders = chunk.joinToString(",") { "?" }
+      val args = chunk.map { it.toString() }.toTypedArray()
+      db.delete(TABLE, "id IN ($placeholders)", args)
+    }
   }
 
   @Synchronized
@@ -123,5 +129,6 @@ class LocationStore(context: Context) :
     private const val DB_VERSION = 1
     private const val TABLE = "locations"
     private const val TRIM_EVERY = 50
+    private const val DELETE_CHUNK = 500 // stay under SQLite's ~999 variable cap
   }
 }

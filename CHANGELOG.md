@@ -4,6 +4,19 @@
 
 ### Bug fixes
 
+- **Geofences survive a process restart.** The geofence registry lived only in
+  memory, so after the app was killed (or rebooted) an OS-delivered transition
+  hit a fresh process with an empty registry and was silently dropped. The
+  registry (and the registered-id set) is now persisted and restored, so
+  transitions are still refined and forwarded after a restart.
+- **Geofence reconciliation now removes stale geofences.** As the device moved,
+  reconcile registered the nearest 100 but never removed the ones that dropped
+  out, so the OS-registered set could grow past the 100-geofence cap and start
+  failing. It now removes geofences that leave the nearest set.
+- **Large `maxBatchSize` no longer breaks sync deletes.** `deleteByIds` built one
+  `IN (?)` placeholder per id; a `maxBatchSize` above SQLite's ~999 variable cap
+  threw, so uploaded rows were never deleted (and re-uploaded forever). Deletes
+  are now chunked.
 - **Buffered locations sync after a process restart.** When WorkManager ran the
   sync worker in a fresh process (after an app kill or reboot), the in-memory
   config was still default (`url == null`), so the worker reported success and

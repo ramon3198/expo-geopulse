@@ -22,6 +22,10 @@ class GeofenceReceiver : BroadcastReceiver() {
     val triggering = event.triggeringGeofences ?: return
     val location = event.triggeringLocation
 
+    // The OS keeps firing geofences across process death; restore the persisted
+    // specs so a fresh process can still refine/forward the transition.
+    GeofenceManager.ensureRestored(context)
+
     for (geofence in triggering) {
       val spec = GeofenceManager.specFor(geofence.requestId) ?: continue
       // Polygon refinement: a polygon is registered as its bounding circle, so

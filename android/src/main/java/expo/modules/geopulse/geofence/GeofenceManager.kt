@@ -33,19 +33,28 @@ class GeofenceManager(private val context: Context) {
   private var lastRegLat: Double? = null
   private var lastRegLng: Double? = null
 
+  init {
+    // Restore any persisted registry so reconcile (driven by movement) is
+    // consistent after a process restart, not only when a transition fires.
+    ensureRestored(context)
+  }
+
   fun add(spec: GeofenceSpec) {
     synchronized(registry) { registry[spec.identifier] = spec }
+    persistRegistry()
     reconcile(force = true)
   }
 
   fun addAll(specs: List<GeofenceSpec>) {
     synchronized(registry) { specs.forEach { registry[it.identifier] = it } }
+    persistRegistry()
     reconcile(force = true)
   }
 
   fun remove(identifier: String) {
     synchronized(registry) { registry.remove(identifier) }
     runCatching { client.removeGeofences(listOf(identifier)) }
+    persistRegistry()
     reconcile(force = true)
   }
 
@@ -53,14 +62,22 @@ class GeofenceManager(private val context: Context) {
     val ids = synchronized(registry) {
       val keys = registry.keys.toList()
       registry.clear()
+      registeredIds.clear()
       keys
     }
     if (ids.isNotEmpty()) runCatching { client.removeGeofences(ids) }
     lastRegLat = null
     lastRegLng = null
+    val store = GeofenceStore(context)
+    store.saveRegistry(emptyList())
+    store.saveRegistered(emptyList())
   }
 
   fun getAll(): List<GeofenceSpec> = synchronized(registry) { registry.values.toList() }
+
+  private fun persistRegistry() {
+    GeofenceStore(context).saveRegistry(getAll().map { it.toMap() })
+  }
 
   /** Called as the device moves; re-registers the nearest geofences when needed. */
   fun onLocation(latitude: Double, longitude: Double) {
@@ -87,6 +104,13 @@ class GeofenceManager(private val context: Context) {
       all.take(MAX_ACTIVE)
     }
 
+    val selectedIds = selected.map { it.identifier }.toSet()
+    // Remove geofences that dropped out of the nearest set so the OS-registered
+    // count never grows past MAX_ACTIVE as the device roams the full registry
+    // (Play Services only adds/updates the ids we pass; it doesn't drop others).
+    val stale = synchronized(registry) { registeredIds - selectedIds }
+    if (stale.isNotEmpty()) runCatching { client.removeGeofences(stale.toList()) }
+
     val geofences = selected.map { it.toGeofence() }
     if (geofences.isEmpty()) return
 
@@ -98,6 +122,11 @@ class GeofenceManager(private val context: Context) {
     runCatching {
       client.addGeofences(request, geofencePendingIntent())
     }
+    synchronized(registry) {
+      registeredIds.clear()
+      registeredIds.addAll(selectedIds)
+    }
+    GeofenceStore(context).saveRegistered(selectedIds)
     lastRegLat = lat
     lastRegLng = lng
   }
@@ -119,12 +148,37 @@ class GeofenceManager(private val context: Context) {
     private const val EARTH_RADIUS_M = 6371000.0
 
     private val registry = LinkedHashMap<String, GeofenceSpec>()
+    // Ids currently registered with Play Services (guarded by `registry`).
+    private val registeredIds = LinkedHashSet<String>()
 
     @Volatile private var currentLat: Double? = null
     @Volatile private var currentLng: Double? = null
+    @Volatile private var restored = false
 
     fun specFor(identifier: String): GeofenceSpec? =
       synchronized(registry) { registry[identifier] }
+
+    /**
+     * Restores the persisted registry + registered-id set into a fresh process
+     * (e.g. when [GeofenceReceiver] is invoked after the app was killed but the
+     * OS-held geofences keep firing). No-op once loaded or if already populated.
+     */
+    fun ensureRestored(context: Context) {
+      if (restored) return
+      synchronized(registry) {
+        if (restored) return
+        if (registry.isEmpty()) {
+          val store = GeofenceStore(context)
+          for (m in store.loadRegistry()) {
+            val spec = specFromMap(m)
+            if (spec.identifier.isNotEmpty()) registry[spec.identifier] = spec
+          }
+          registeredIds.clear()
+          registeredIds.addAll(store.loadRegistered())
+        }
+        restored = true
+      }
+    }
 
     fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
       val dLat = Math.toRadians(lat2 - lat1)
