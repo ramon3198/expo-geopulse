@@ -20,7 +20,10 @@
   eco one, so a partial update during a degrade can't freeze eco in place. All
   config + degrade-state transitions (`ready` / `setConfig` / `start` vs. the
   auto-degrade on the worker thread) are serialized under a lock, so they can't
-  interleave into an inconsistent, unrecoverable state.
+  interleave into an inconsistent, unrecoverable state. `ready`/`setConfig`
+  persist the exact config they set (captured under the lock), so a concurrent
+  degrade can't cause the transient eco config to be saved and restored on the
+  next launch.
 - **`setConfig` now actually applies while tracking is running.** It updated the
   stored config but never reconfigured the live foreground service, so changing
   `preset` / intervals / `distanceFilter` left the real GPS request — and

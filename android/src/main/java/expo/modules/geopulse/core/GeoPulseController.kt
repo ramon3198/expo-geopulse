@@ -93,12 +93,14 @@ object GeoPulseController {
   // ---- configuration / lifecycle ----
 
   fun ready(cfg: GeoPulseConfig) {
-    synchronized(configLock) {
-      config = cfg.resolvePreset()
+    val applied = synchronized(configLock) {
+      val resolved = cfg.resolvePreset()
+      config = resolved
       clearBatteryDegradeState()
+      resolved
     }
     rebuildFusion()
-    persistConfig(config)
+    persistConfig(applied)
   }
 
   /** Merge only the provided keys onto the current config (does NOT replace it). */
@@ -111,7 +113,7 @@ object GeoPulseController {
     // `config` reference (the location worker thread reads it concurrently).
     // The whole read-modify-write runs under configLock so it can't interleave
     // with the auto-degrade on the worker thread.
-    synchronized(configLock) {
+    val applied = synchronized(configLock) {
       val base = preDegradeConfig ?: config
       val merged = base.copy().applyMap(patch)
       // If the caller hand-tuned a preset-controlled tracking field without also
@@ -120,11 +122,15 @@ object GeoPulseController {
       if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
         merged.preset = ""
       }
-      config = merged.resolvePreset()
+      val resolved = merged.resolvePreset()
+      config = resolved
       clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
+      resolved
     }
     rebuildFusion()
-    persistConfig(config)
+    // Persist the config we just set — never a transient eco that a concurrent
+    // battery auto-degrade may have written to the live field after the lock.
+    persistConfig(applied)
     // Apply "while running": re-issue the GPS request and reconcile driving
     // detection on the live service (the API promises setConfig takes effect
     // without a stop/start).
