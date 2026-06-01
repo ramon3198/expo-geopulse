@@ -12,6 +12,19 @@ libraries. It is built on the **Expo Modules API** (Kotlin-first), targets React
 
 > **Status:** Android only (by design, for now). iOS is not yet implemented.
 
+## Screenshots
+
+The example app (dark & light themes, animated droplet theme reveal) and the
+companion real-time dashboard:
+
+| Example app (dark) | Example app (light) | Permissions & tools |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/app-dark.png" width="220" alt="App dark theme" /> | <img src="docs/screenshots/app-light.png" width="220" alt="App light theme" /> | <img src="docs/screenshots/app-permissions.png" width="220" alt="Permissions and tools" /> |
+
+**Companion dashboard** — live map (MapLibre), route trace, visits, trips and driving events:
+
+<img src="docs/screenshots/dashboard-phone.png" width="320" alt="Companion dashboard" />
+
 ---
 
 ## Why GeoPulse?

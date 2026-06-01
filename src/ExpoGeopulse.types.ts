@@ -346,6 +346,8 @@ export interface PermissionStatus {
   background: boolean;
   notifications: boolean;
   activityRecognition: boolean;
+  /** Whether device location services (GPS/network) are turned on. */
+  locationServicesEnabled: boolean;
   status: AuthorizationStatus;
 }
 

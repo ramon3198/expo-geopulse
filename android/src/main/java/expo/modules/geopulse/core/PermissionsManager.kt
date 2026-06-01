@@ -37,6 +37,22 @@ object PermissionsManager {
     granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ||
       granted(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
 
+  fun hasBackgroundPermission(ctx: Context): Boolean =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    } else {
+      hasLocationPermission(ctx) // pre-Android 10: foreground grant covers background
+    }
+
+  /** Opens this app's system settings page (for manual "Allow all the time"). */
+  fun openAppSettings(ctx: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+      data = Uri.fromParts("package", ctx.packageName, null)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { ctx.startActivity(intent) }
+  }
+
   fun isLocationEnabled(ctx: Context): Boolean {
     val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
     return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
@@ -91,6 +107,7 @@ object PermissionsManager {
       "background" to background,
       "notifications" to notifications,
       "activityRecognition" to activity,
+      "locationServicesEnabled" to isLocationEnabled(ctx),
       "status" to status,
     )
   }

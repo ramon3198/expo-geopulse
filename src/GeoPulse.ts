@@ -77,6 +77,30 @@ class GeoPulse {
     return NativeModule.getProviderState();
   }
 
+  /**
+   * Prompt the user to turn on device location via the native Play-services
+   * dialog (no trip to Settings). Resolves `true` if location is enabled.
+   */
+  requestEnableLocation(): Promise<boolean> {
+    return NativeModule.requestEnableLocation();
+  }
+
+  /**
+   * Request "Allow all the time" (background) location. On Android 10+ this must
+   * be called *after* foreground location is granted, and the OS may only allow
+   * it via Settings — if the returned status still has `background: false`, send
+   * the user to {@link openAppSettings}. Rejects with `NEEDS_FOREGROUND` if
+   * foreground location isn't granted yet.
+   */
+  requestBackgroundPermission(): Promise<PermissionStatus> {
+    return NativeModule.requestBackgroundPermission();
+  }
+
+  /** Open this app's system settings page (for manual "Allow all the time"). */
+  openAppSettings(): Promise<void> {
+    return NativeModule.openAppSettings();
+  }
+
   /** Whether the app is exempt from Doze battery optimization. */
   isIgnoringBatteryOptimizations(): Promise<boolean> {
     return NativeModule.isIgnoringBatteryOptimizations();

@@ -33,6 +33,9 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   // permissions
   requestPermissions(): Promise<PermissionStatus>;
   getProviderState(): Promise<PermissionStatus>;
+  requestEnableLocation(): Promise<boolean>;
+  requestBackgroundPermission(): Promise<PermissionStatus>;
+  openAppSettings(): Promise<void>;
 
   // battery / doze
   isIgnoringBatteryOptimizations(): Promise<boolean>;

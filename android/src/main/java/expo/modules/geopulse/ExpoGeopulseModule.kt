@@ -1,8 +1,11 @@
 package expo.modules.geopulse
 
+import android.Manifest
+import android.os.Build
 import expo.modules.geopulse.core.GeoPulseConfig
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.core.PermissionsManager
+import expo.modules.geopulse.location.LocationSettings
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -14,6 +17,9 @@ private class NotImplementedException(feature: String) :
 
 class ExpoGeopulseModule : Module() {
   private val controller get() = GeoPulseController
+
+  // Pending promise for the "turn on location" system dialog (resolved in OnActivityResult).
+  private var enableLocationPromise: Promise? = null
 
   override fun definition() = ModuleDefinition {
     Name("ExpoGeopulse")
@@ -41,6 +47,16 @@ class ExpoGeopulseModule : Module() {
 
     OnDestroy {
       controller.detach()
+    }
+
+    // Result of the "turn on location" system dialog.
+    OnActivityResult { _, payload ->
+      if (payload.requestCode == LocationSettings.REQUEST_CODE) {
+        val promise = enableLocationPromise
+        enableLocationPromise = null
+        // resultCode RESULT_OK (-1) means the user enabled location.
+        promise?.resolve(payload.resultCode == android.app.Activity.RESULT_OK)
+      }
     }
 
     // ---- lifecycle / tracking ----
@@ -103,6 +119,71 @@ class ExpoGeopulseModule : Module() {
       } else {
         promise.resolve(PermissionsManager.statusMap(context))
       }
+    }
+
+    // Requests ACCESS_BACKGROUND_LOCATION. On Android 10+ this MUST come after a
+    // foreground grant; the result map's `background` field reflects the outcome.
+    // If the OS won't show a dialog (already denied / "only this time" history),
+    // the app should fall back to openAppSettings().
+    AsyncFunction("requestBackgroundPermission") { promise: Promise ->
+      val permissions = appContext.permissions
+      val context = appContext.reactContext
+      if (permissions == null || context == null) {
+        promise.reject(CodedException("Permissions manager is unavailable."))
+        return@AsyncFunction
+      }
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        promise.resolve(PermissionsManager.statusMap(context)) // covered by foreground grant
+        return@AsyncFunction
+      }
+      if (!PermissionsManager.hasLocationPermission(context)) {
+        // Background can't be granted without foreground first.
+        promise.reject(CodedException("NEEDS_FOREGROUND: grant foreground location before background."))
+        return@AsyncFunction
+      }
+      permissions.askForPermissions(
+        { _ -> promise.resolve(PermissionsManager.statusMap(context)) },
+        Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+      )
+    }
+
+    AsyncFunction("openAppSettings") { promise: Promise ->
+      val context = appContext.reactContext
+      if (context == null) {
+        promise.reject(CodedException("Context is unavailable."))
+      } else {
+        PermissionsManager.openAppSettings(context)
+        promise.resolve(null)
+      }
+    }
+
+    // Prompt the user to turn on device location via the Play-services dialog.
+    // Resolves true if location is (or becomes) enabled, false otherwise.
+    AsyncFunction("requestEnableLocation") { promise: Promise ->
+      val context = appContext.reactContext
+      val activity = appContext.currentActivity
+      if (context == null) {
+        promise.reject(CodedException("Context is unavailable."))
+        return@AsyncFunction
+      }
+      LocationSettings.check(
+        context = context,
+        onEnabled = { promise.resolve(true) },
+        onResolvable = { resolvable ->
+          if (activity == null) {
+            promise.resolve(false)
+          } else {
+            enableLocationPromise = promise
+            try {
+              resolvable.startResolutionForResult(activity, LocationSettings.REQUEST_CODE)
+            } catch (e: Throwable) {
+              enableLocationPromise = null
+              promise.resolve(false)
+            }
+          }
+        },
+        onUnavailable = { promise.resolve(false) },
+      )
     }
 
     AsyncFunction("isIgnoringBatteryOptimizations") { promise: Promise ->
