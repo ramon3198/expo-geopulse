@@ -210,6 +210,10 @@ class GeoPulse {
     return NativeModule.addListener('onProviderChange', listener);
   }
 
+  /**
+   * Subscribe to periodic heartbeat events.
+   * @remarks Reserved — not yet implemented; no `onHeartbeat` events are emitted yet.
+   */
   onHeartbeat(listener: (event: HeartbeatEvent) => void): EventSubscription {
     return NativeModule.addListener('onHeartbeat', listener);
   }

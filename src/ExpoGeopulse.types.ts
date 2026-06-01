@@ -81,7 +81,11 @@ export interface GeoPulseConfig {
   // --- battery intelligence (M4) ---
   /** Stop GPS when the device is detected stationary (the big battery saver). */
   stopOnStationary?: boolean;
-  /** Radius (m) of the stationary geofence used to wake tracking. */
+  /**
+   * Radius (m) of the stationary geofence used to wake tracking.
+   * @remarks Reserved — not yet implemented. Stationary detection currently uses
+   * activity recognition + the significant-motion sensor, not a radius.
+   */
   stationaryRadius?: number;
 
   // --- reliability ---
@@ -133,10 +137,18 @@ export interface GeoPulseConfig {
   url?: string;
   httpMethod?: 'POST' | 'PUT';
   headers?: Record<string, string>;
+  /**
+   * Extra key/values to merge into each sync request body.
+   * @remarks Reserved — not yet implemented; the request body is the locations array.
+   */
   params?: Record<string, unknown>;
   autoSync?: boolean;
   /** Upload once this many records are queued (0 = upload each location). */
   autoSyncThreshold?: number;
+  /**
+   * Send queued locations as one batched array vs. one request per location.
+   * @remarks Reserved — not yet implemented; sync always batches by `maxBatchSize`.
+   */
   batchSync?: boolean;
   maxBatchSize?: number;
   maxRecordsToPersist?: number;
@@ -358,6 +370,7 @@ export type GeoPulseEvents = {
   onActivityChange: (event: ActivityChangeEvent) => void;
   onGeofence: (event: GeofenceEvent) => void;
   onProviderChange: (event: ProviderChangeEvent) => void;
+  /** @remarks Reserved — not yet implemented; no heartbeat events are emitted yet. */
   onHeartbeat: (event: HeartbeatEvent) => void;
   onError: (error: GeoPulseError) => void;
   onVisit: (event: VisitEvent) => void;
