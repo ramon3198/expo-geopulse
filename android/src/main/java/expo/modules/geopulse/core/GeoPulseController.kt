@@ -36,6 +36,15 @@ object GeoPulseController {
   private const val PROCESS_NOISE = 3.0
   private const val DEFAULT_GET_LIMIT = 1000
 
+  // Tracking fields a named preset controls. Hand-tuning any of these (without
+  // also passing `preset`) drops back to manual mode so the change sticks.
+  private val PRESET_TUNING_KEYS = setOf(
+    "desiredAccuracy",
+    "distanceFilter",
+    "locationUpdateInterval",
+    "fastestLocationUpdateInterval",
+  )
+
   private var dispatcher: EventDispatcher? = null
   private var appContext: Context? = null
 
@@ -87,7 +96,17 @@ object GeoPulseController {
 
   /** Merge only the provided keys onto the current config (does NOT replace it). */
   fun setConfig(patch: Map<String, Any?>) {
-    config = config.applyMap(patch).resolvePreset()
+    // Compute the merge on a fresh copy and publish it atomically via the
+    // @Volatile `config` reference, instead of mutating the live config in place
+    // (the location worker thread reads it concurrently).
+    val merged = config.copy().applyMap(patch)
+    // If the caller hand-tuned a preset-controlled tracking field without also
+    // naming a preset, switch to manual mode so resolvePreset() below doesn't
+    // silently overwrite that change.
+    if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
+      merged.preset = ""
+    }
+    config = merged.resolvePreset()
     rebuildFusion()
     persistConfig(config)
   }
@@ -266,7 +285,7 @@ object GeoPulseController {
     if (level < 0) return
     if (level / 100.0 <= cfg.lowBatteryThreshold && !bm.isCharging) {
       degradedForBattery = true
-      config = cfg.resolvePreset(forceEco = true)
+      config = cfg.copy().resolvePreset(forceEco = true)
       emit("onError", mapOf("code" to "BATTERY_LOW", "message" to "Tracking degraded to eco mode (battery $level%)."))
       // Re-apply the lighter LocationRequest immediately.
       val intent = Intent(ctx, LocationService::class.java)

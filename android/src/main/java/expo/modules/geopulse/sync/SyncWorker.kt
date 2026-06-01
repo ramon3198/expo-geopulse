@@ -1,6 +1,11 @@
 package expo.modules.geopulse.sync
 
 import android.content.Context
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import expo.modules.geopulse.core.GeoPulseController
@@ -33,8 +38,22 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
 
       store.deleteByIds(batch.map { it.id })
     }
-    // Hit the per-run cap with rows still pending: reschedule promptly.
-    return if (store.count() > 0) Result.retry() else Result.success()
+    // Hit the per-run cap with rows still pending but no upload error: this is
+    // not a failure, so don't trigger WorkManager's exponential backoff. Enqueue
+    // a fresh continuation (attempt count resets -> no backoff) that runs as soon
+    // as this one completes, and report success.
+    if (store.count() > 0) {
+      runCatching {
+        val next = OneTimeWorkRequestBuilder<SyncWorker>()
+          .setConstraints(
+            Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+          )
+          .build()
+        WorkManager.getInstance(applicationContext)
+          .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, next)
+      }
+    }
+    return Result.success()
   }
 
   companion object {

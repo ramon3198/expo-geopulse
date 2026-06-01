@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- **`setConfig` no longer mutates the live config in place.** It merged onto the
+  shared config object and returned the same instance, so the location worker
+  thread could read a half-applied (or, for 64-bit fields, torn) config. Changes
+  are now computed on a copy and published atomically via a `@Volatile`
+  reference. The battery auto-degrade path got the same treatment.
+- **Presets and manual tuning no longer fight.** `setConfig({ distanceFilter })`
+  while a preset was active was silently overwritten by the preset. Hand-tuning a
+  preset-controlled field now drops to manual mode so the change sticks;
+  `setConfig({ preset })` still applies the preset as before.
+
 ### Performance
 
 - **Location callbacks now run on a dedicated background thread.** The native
@@ -10,6 +22,11 @@
   dedicated `HandlerThread` (`geopulse-location`), torn down on `stop()`, keeping
   the app's main thread free. `lastLocation` is now `@Volatile` for safe
   cross-thread reads.
+- **`SyncWorker` no longer applies retry backoff when it's just paging.** On
+  hitting the per-run batch cap with rows still pending (but no upload error), it
+  enqueued a `retry()`, triggering WorkManager's exponential backoff and slowing
+  a large backlog. It now enqueues a fresh continuation (no backoff) and reports
+  success; backoff stays reserved for real HTTP failures.
 
 ## 0.2.2
 

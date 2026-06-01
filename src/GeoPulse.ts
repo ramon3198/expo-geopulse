@@ -56,6 +56,11 @@ class GeoPulse {
    * ```ts
    * await GeoPulse.setConfig({ preset: 'eco' }); // changes mode only; sync etc. untouched
    * ```
+   *
+   * Presets and manual tuning interact predictably: passing `preset` applies
+   * that mode's accuracy/interval/distance values. Hand-tuning one of those
+   * fields (e.g. `{ distanceFilter: 100 }`) instead drops to manual mode so your
+   * value sticks, rather than being overwritten by the active preset.
    */
   setConfig(config: Partial<GeoPulseConfig>): Promise<GeoPulseState> {
     return NativeModule.setConfig(config);

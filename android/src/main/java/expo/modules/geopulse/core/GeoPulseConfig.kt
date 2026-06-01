@@ -113,6 +113,53 @@ class GeoPulseConfig : Record {
     return this
   }
 
+  /**
+   * Returns a new instance with the same field values. Config changes are
+   * computed on a copy and then published atomically via the `@Volatile`
+   * `config` reference, so the location worker thread never reads a config that
+   * is being mutated in place (which, for 64-bit fields, could even tear).
+   * Unlike [toMap] + [applyMap], this also carries [notification] across.
+   */
+  fun copy(): GeoPulseConfig {
+    val c = GeoPulseConfig()
+    c.desiredAccuracy = desiredAccuracy
+    c.distanceFilter = distanceFilter
+    c.locationUpdateInterval = locationUpdateInterval
+    c.fastestLocationUpdateInterval = fastestLocationUpdateInterval
+    c.preset = preset
+    c.lowBatteryThreshold = lowBatteryThreshold
+    c.stopOnStationary = stopOnStationary
+    c.stationaryRadius = stationaryRadius
+    c.disableMockLocations = disableMockLocations
+    c.outageThreshold = outageThreshold
+    c.enableTripDetection = enableTripDetection
+    c.visitRadius = visitRadius
+    c.minVisitDwell = minVisitDwell
+    c.enableDrivingEvents = enableDrivingEvents
+    c.harshAccelThreshold = harshAccelThreshold
+    c.harshBrakeThreshold = harshBrakeThreshold
+    c.speedLimit = speedLimit
+    c.idleTimeout = idleTimeout
+    c.drivingMinSpeed = drivingMinSpeed
+    c.enableKalman = enableKalman
+    c.accuracyFilter = accuracyFilter
+    c.enableHeadless = enableHeadless
+    c.startOnBoot = startOnBoot
+    c.url = url
+    c.httpMethod = httpMethod
+    c.headers = headers
+    c.params = params
+    c.autoSync = autoSync
+    c.autoSyncThreshold = autoSyncThreshold
+    c.batchSync = batchSync
+    c.maxBatchSize = maxBatchSize
+    c.maxRecordsToPersist = maxRecordsToPersist
+    c.debug = debug
+    c.logLevel = logLevel
+    c.notification = notification
+    return c
+  }
+
   fun toMap(): Map<String, Any?> = mapOf(
     "desiredAccuracy" to desiredAccuracy,
     "distanceFilter" to distanceFilter,
