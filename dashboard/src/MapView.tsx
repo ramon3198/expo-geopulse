@@ -79,6 +79,27 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const loadedRef = useRef(false);
   const fitKeyRef = useRef<string | null>(null);
+  // Latest props, so we can (re)paint data the moment the style finishes loading
+  // even if it arrived before 'load' / after a style switch.
+  const dataRef = useRef({ path, visits });
+  useEffect(() => {
+    dataRef.current = { path, visits };
+  }, [path, visits]);
+
+  const paintData = (map: maplibregl.Map) => {
+    const { path: p, visits: v } = dataRef.current;
+    (map.getSource('route') as maplibregl.GeoJSONSource | undefined)?.setData({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: p.map((x) => [x.coords.longitude, x.coords.latitude]),
+      },
+      properties: {},
+    });
+    (map.getSource('visits') as maplibregl.GeoJSONSource | undefined)?.setData(
+      visitsToGeoJSON(v)
+    );
+  };
 
   // Init map once.
   useEffect(() => {
@@ -108,6 +129,7 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
         popup.remove();
       });
       loadedRef.current = true;
+      paintData(map); // paint any data that arrived before the map finished loading
     };
     map.on('load', onLoad);
 
@@ -118,6 +140,9 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
       markerElRef.current = null;
       loadedRef.current = false;
     };
+    // Init runs once; the initial style.url is read intentionally on first mount,
+    // and later style changes are handled by the dedicated effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Switch base style on demand (re-adds overlays after the new style loads).
@@ -129,6 +154,7 @@ export function MapView({ style, path, last, visits, deviceKey, follow }: Props)
     map.once('styledata', () => {
       addOverlays(map);
       loadedRef.current = true;
+      paintData(map); // re-apply current data after the new style loads
     });
   }, [style.url]);
 

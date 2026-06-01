@@ -66,8 +66,10 @@ class ExpoGeopulseModule : Module() {
       promise.resolve(controller.stateMap())
     }
 
-    AsyncFunction("setConfig") { config: GeoPulseConfig, promise: Promise ->
-      controller.setConfig(config)
+    // Merge: only the keys present in the JS object are applied; the rest of the
+    // running config (url, autoSync, trip/driving detection, ...) is preserved.
+    AsyncFunction("setConfig") { patch: Map<String, Any?>, promise: Promise ->
+      controller.setConfig(patch)
       promise.resolve(controller.stateMap())
     }
 

@@ -49,8 +49,15 @@ class GeoPulse {
     return NativeModule.ready(config);
   }
 
-  /** Merge new configuration while running. */
-  setConfig(config: GeoPulseConfig): Promise<GeoPulseState> {
+  /**
+   * Merge configuration while running. Only the fields you pass are changed —
+   * everything else (e.g. `url`, `autoSync`, trip/driving detection) is kept.
+   *
+   * ```ts
+   * await GeoPulse.setConfig({ preset: 'eco' }); // changes mode only; sync etc. untouched
+   * ```
+   */
+  setConfig(config: Partial<GeoPulseConfig>): Promise<GeoPulseState> {
     return NativeModule.setConfig(config);
   }
 
@@ -276,9 +283,16 @@ class GeoPulse {
   }
 
   /**
-   * Run the full permission flow (foreground → background → GPS) and report the
+   * Run the full permission flow (foreground → GPS → background) and report the
    * outcome — no need to orchestrate `requestPermissions` / `requestEnableLocation`
    * / `requestBackgroundPermission` by hand.
+   *
+   * **`granted` means tracking can start now** — i.e. foreground location is
+   * granted *and* device location services are on. Background ("Allow all the
+   * time") is best-effort and reported **separately**: even when `granted` is
+   * `true`, check `result.background` — if it's `false` (with
+   * `reason === 'background_denied'`), foreground tracking works but you should
+   * send the user to {@link openAppSettings} for true background tracking.
    */
   async ensurePermissions(options: { background?: boolean } = {}): Promise<PermissionResult> {
     const { background = true } = options;

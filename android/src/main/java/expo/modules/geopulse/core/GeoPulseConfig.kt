@@ -159,47 +159,54 @@ class GeoPulseConfig : Record {
     const val PASSIVE = 3
   }
 
+  /**
+   * Applies only the keys *present* in [map] onto this config, leaving every
+   * other field untouched. This is what makes `setConfig` a true MERGE — a JS
+   * call like `setConfig({ preset: 'eco' })` changes the mode without wiping
+   * `url`, `autoSync`, trip/driving detection, etc.
+   */
+  fun applyMap(map: Map<String, Any?>): GeoPulseConfig {
+    (map["desiredAccuracy"] as? Number)?.let { desiredAccuracy = it.toInt() }
+    (map["distanceFilter"] as? Number)?.let { distanceFilter = it.toDouble() }
+    (map["locationUpdateInterval"] as? Number)?.let { locationUpdateInterval = it.toLong() }
+    (map["fastestLocationUpdateInterval"] as? Number)?.let { fastestLocationUpdateInterval = it.toLong() }
+    (map["preset"] as? String)?.let { preset = it }
+    (map["lowBatteryThreshold"] as? Number)?.let { lowBatteryThreshold = it.toDouble() }
+    (map["stopOnStationary"] as? Boolean)?.let { stopOnStationary = it }
+    (map["stationaryRadius"] as? Number)?.let { stationaryRadius = it.toDouble() }
+    (map["disableMockLocations"] as? Boolean)?.let { disableMockLocations = it }
+    (map["outageThreshold"] as? Number)?.let { outageThreshold = it.toLong() }
+    (map["enableTripDetection"] as? Boolean)?.let { enableTripDetection = it }
+    (map["visitRadius"] as? Number)?.let { visitRadius = it.toDouble() }
+    (map["minVisitDwell"] as? Number)?.let { minVisitDwell = it.toLong() }
+    (map["enableDrivingEvents"] as? Boolean)?.let { enableDrivingEvents = it }
+    (map["harshAccelThreshold"] as? Number)?.let { harshAccelThreshold = it.toDouble() }
+    (map["harshBrakeThreshold"] as? Number)?.let { harshBrakeThreshold = it.toDouble() }
+    (map["speedLimit"] as? Number)?.let { speedLimit = it.toDouble() }
+    (map["idleTimeout"] as? Number)?.let { idleTimeout = it.toLong() }
+    (map["drivingMinSpeed"] as? Number)?.let { drivingMinSpeed = it.toDouble() }
+    (map["enableKalman"] as? Boolean)?.let { enableKalman = it }
+    (map["accuracyFilter"] as? Number)?.let { accuracyFilter = it.toDouble() }
+    (map["enableHeadless"] as? Boolean)?.let { enableHeadless = it }
+    (map["startOnBoot"] as? Boolean)?.let { startOnBoot = it }
+    (map["url"] as? String)?.let { url = it }
+    (map["httpMethod"] as? String)?.let { httpMethod = it }
+    @Suppress("UNCHECKED_CAST")
+    (map["headers"] as? Map<String, String>)?.let { headers = it }
+    @Suppress("UNCHECKED_CAST")
+    (map["params"] as? Map<String, Any?>)?.let { params = it }
+    (map["autoSync"] as? Boolean)?.let { autoSync = it }
+    (map["autoSyncThreshold"] as? Number)?.let { autoSyncThreshold = it.toInt() }
+    (map["batchSync"] as? Boolean)?.let { batchSync = it }
+    (map["maxBatchSize"] as? Number)?.let { maxBatchSize = it.toInt() }
+    (map["maxRecordsToPersist"] as? Number)?.let { maxRecordsToPersist = it.toInt() }
+    (map["debug"] as? Boolean)?.let { debug = it }
+    (map["logLevel"] as? Number)?.let { logLevel = it.toInt() }
+    return this
+  }
+
   companion object {
     /** Rebuilds a config from a persisted map (used to restore after reboot). */
-    fun fromMap(map: Map<String, Any?>): GeoPulseConfig {
-      val c = GeoPulseConfig()
-      (map["desiredAccuracy"] as? Number)?.let { c.desiredAccuracy = it.toInt() }
-      (map["distanceFilter"] as? Number)?.let { c.distanceFilter = it.toDouble() }
-      (map["locationUpdateInterval"] as? Number)?.let { c.locationUpdateInterval = it.toLong() }
-      (map["fastestLocationUpdateInterval"] as? Number)?.let { c.fastestLocationUpdateInterval = it.toLong() }
-      (map["preset"] as? String)?.let { c.preset = it }
-      (map["lowBatteryThreshold"] as? Number)?.let { c.lowBatteryThreshold = it.toDouble() }
-      (map["stopOnStationary"] as? Boolean)?.let { c.stopOnStationary = it }
-      (map["stationaryRadius"] as? Number)?.let { c.stationaryRadius = it.toDouble() }
-      (map["disableMockLocations"] as? Boolean)?.let { c.disableMockLocations = it }
-      (map["outageThreshold"] as? Number)?.let { c.outageThreshold = it.toLong() }
-      (map["enableTripDetection"] as? Boolean)?.let { c.enableTripDetection = it }
-      (map["visitRadius"] as? Number)?.let { c.visitRadius = it.toDouble() }
-      (map["minVisitDwell"] as? Number)?.let { c.minVisitDwell = it.toLong() }
-      (map["enableDrivingEvents"] as? Boolean)?.let { c.enableDrivingEvents = it }
-      (map["harshAccelThreshold"] as? Number)?.let { c.harshAccelThreshold = it.toDouble() }
-      (map["harshBrakeThreshold"] as? Number)?.let { c.harshBrakeThreshold = it.toDouble() }
-      (map["speedLimit"] as? Number)?.let { c.speedLimit = it.toDouble() }
-      (map["idleTimeout"] as? Number)?.let { c.idleTimeout = it.toLong() }
-      (map["drivingMinSpeed"] as? Number)?.let { c.drivingMinSpeed = it.toDouble() }
-      (map["enableKalman"] as? Boolean)?.let { c.enableKalman = it }
-      (map["accuracyFilter"] as? Number)?.let { c.accuracyFilter = it.toDouble() }
-      (map["enableHeadless"] as? Boolean)?.let { c.enableHeadless = it }
-      (map["startOnBoot"] as? Boolean)?.let { c.startOnBoot = it }
-      (map["url"] as? String)?.let { c.url = it }
-      (map["httpMethod"] as? String)?.let { c.httpMethod = it }
-      @Suppress("UNCHECKED_CAST")
-      (map["headers"] as? Map<String, String>)?.let { c.headers = it }
-      @Suppress("UNCHECKED_CAST")
-      (map["params"] as? Map<String, Any?>)?.let { c.params = it }
-      (map["autoSync"] as? Boolean)?.let { c.autoSync = it }
-      (map["autoSyncThreshold"] as? Number)?.let { c.autoSyncThreshold = it.toInt() }
-      (map["batchSync"] as? Boolean)?.let { c.batchSync = it }
-      (map["maxBatchSize"] as? Number)?.let { c.maxBatchSize = it.toInt() }
-      (map["maxRecordsToPersist"] as? Number)?.let { c.maxRecordsToPersist = it.toInt() }
-      (map["debug"] as? Boolean)?.let { c.debug = it }
-      (map["logLevel"] as? Number)?.let { c.logLevel = it.toInt() }
-      return c
-    }
+    fun fromMap(map: Map<String, Any?>): GeoPulseConfig = GeoPulseConfig().applyMap(map)
   }
 }

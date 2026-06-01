@@ -3,11 +3,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE, WS_URL } from './config';
 import type {
   DeviceInfo,
+  DrivingEvent,
   FeedItem,
   GeoLocation,
+  TripEvent,
+  VisitEvent,
   VisitMarker,
   WsMessage,
 } from './types';
+
+interface EventsResponse {
+  trips?: TripEvent[];
+  visits?: VisitEvent[];
+  driving?: DrivingEvent[];
+}
 
 interface LiveState {
   connected: boolean;
@@ -36,7 +45,9 @@ export function useLiveFeed(): LiveState {
 
   // Keep the selected device readable inside the WS handler without reconnecting.
   const deviceRef = useRef<string | null>(null);
-  deviceRef.current = device;
+  useEffect(() => {
+    deviceRef.current = device;
+  }, [device]);
 
   const pushFeed = useCallback((item: FeedItem) => {
     setFeed((prev) => [item, ...prev].slice(0, 100));
@@ -55,15 +66,17 @@ export function useLiveFeed(): LiveState {
       setPath(locs);
       setLast(locs[locs.length - 1] ?? null);
 
-      const events = await fetch(`${API_BASE}/events/${dev}`).then((r) => r.json());
+      const events: EventsResponse = await fetch(`${API_BASE}/events/${dev}`).then((r) =>
+        r.json()
+      );
       // Visit markers (only "arrive" actions carry the place coordinates).
       const vmarkers: VisitMarker[] = (events.visits ?? [])
-        .filter((e: any) => e.action === 'arrive' && e.visit)
-        .map((e: any) => ({
-          uuid: e.visit.uuid,
-          latitude: e.visit.latitude,
-          longitude: e.visit.longitude,
-          dwellMs: e.visit.dwellMs,
+        .filter((e) => e.action === 'arrive' && e.visit)
+        .map((e) => ({
+          uuid: e.visit!.uuid,
+          latitude: e.visit!.latitude,
+          longitude: e.visit!.longitude,
+          dwellMs: e.visit!.dwellMs,
         }));
       setVisits(vmarkers);
 

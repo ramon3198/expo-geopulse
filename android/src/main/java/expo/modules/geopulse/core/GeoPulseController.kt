@@ -82,8 +82,9 @@ object GeoPulseController {
     persistConfig(config)
   }
 
-  fun setConfig(cfg: GeoPulseConfig) {
-    config = cfg.resolvePreset()
+  /** Merge only the provided keys onto the current config (does NOT replace it). */
+  fun setConfig(patch: Map<String, Any?>) {
+    config = config.applyMap(patch).resolvePreset()
     rebuildFusion()
     persistConfig(config)
   }

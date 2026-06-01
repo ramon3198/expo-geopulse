@@ -24,7 +24,7 @@ import type {
 declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   // lifecycle / tracking
   ready(config: GeoPulseConfig): Promise<GeoPulseState>;
-  setConfig(config: GeoPulseConfig): Promise<GeoPulseState>;
+  setConfig(config: Partial<GeoPulseConfig>): Promise<GeoPulseState>;
   start(): Promise<GeoPulseState>;
   stop(): Promise<GeoPulseState>;
   getState(): Promise<GeoPulseState>;
