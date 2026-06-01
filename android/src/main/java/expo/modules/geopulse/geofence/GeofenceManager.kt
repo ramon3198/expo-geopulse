@@ -9,6 +9,7 @@ import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import expo.modules.geopulse.core.GeoPulseController
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
@@ -119,16 +120,31 @@ class GeofenceManager(private val context: Context) {
       .addGeofences(geofences)
       .build()
 
+    // Mark the new set as registered only once Play Services confirms the add.
+    // addGeofences is async — on async failure (e.g. too many geofences, location
+    // off) we must NOT record them as registered or advance lastReg, so a later
+    // reconcile retries instead of believing a failed registration succeeded.
     runCatching {
       client.addGeofences(request, geofencePendingIntent())
+        .addOnSuccessListener {
+          synchronized(registry) {
+            registeredIds.clear()
+            registeredIds.addAll(selectedIds)
+          }
+          GeofenceStore(context).saveRegistered(selectedIds)
+          lastRegLat = lat
+          lastRegLng = lng
+        }
+        .addOnFailureListener { e ->
+          GeoPulseController.emit(
+            "onError",
+            mapOf(
+              "code" to "GEOFENCE_ERROR",
+              "message" to (e.message ?: "Failed to register geofences"),
+            ),
+          )
+        }
     }
-    synchronized(registry) {
-      registeredIds.clear()
-      registeredIds.addAll(selectedIds)
-    }
-    GeofenceStore(context).saveRegistered(selectedIds)
-    lastRegLat = lat
-    lastRegLng = lng
   }
 
   private fun geofencePendingIntent(): PendingIntent {

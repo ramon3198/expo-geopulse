@@ -12,7 +12,11 @@
 - **Geofence reconciliation now removes stale geofences.** As the device moved,
   reconcile registered the nearest 100 but never removed the ones that dropped
   out, so the OS-registered set could grow past the 100-geofence cap and start
-  failing. It now removes geofences that leave the nearest set.
+  failing. It now removes geofences that leave the nearest set. The
+  registered-set state (and `lastReg` position) is also recorded only after
+  `addGeofences` actually succeeds — an async failure no longer leaves the SDK
+  believing a failed registration succeeded, and emits an `onError`
+  (`GEOFENCE_ERROR`) instead.
 - **Large `maxBatchSize` no longer breaks sync deletes.** `deleteByIds` built one
   `IN (?)` placeholder per id; a `maxBatchSize` above SQLite's ~999 variable cap
   threw, so uploaded rows were never deleted (and re-uploaded forever). Deletes
