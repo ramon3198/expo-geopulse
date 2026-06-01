@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.atomic.AtomicInteger
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.core.PermissionsManager
 import expo.modules.geopulse.driving.DrivingEventsManager
@@ -43,6 +44,10 @@ class LocationService : Service() {
   private var lastFixElapsed = 0L
   private var outageActive = false
   private var paused = false
+  // Bumped on every resume/pause/teardown. The location callback captures the
+  // generation it was registered under and ignores fixes from a superseded one
+  // (e.g. drained by quitSafely() on a pause or a config-driven re-launch).
+  private val locationGeneration = AtomicInteger(0)
   private val watchdogTick = object : Runnable {
     override fun run() {
       checkOutage()
@@ -156,11 +161,13 @@ class LocationService : Service() {
   private fun resumeLocationUpdates() {
     paused = false
     lastFixElapsed = SystemClock.elapsedRealtime() // grace period before flagging an outage
+    val gen = locationGeneration.incrementAndGet()
     val eng = engine ?: LocationEngine(applicationContext).also { engine = it }
     eng.start(GeoPulseController.config) { location ->
-      // Ignore any fix drained from the engine's queue after tracking stopped
-      // (LocationEngine.stop() uses quitSafely(), which delivers pending fixes).
-      if (!GeoPulseController.enabled) return@start
+      // Drop fixes once tracking stopped, or ones drained from a superseded
+      // engine generation (LocationEngine.stop() uses quitSafely(), which still
+      // delivers fixes queued before a pause / config re-launch).
+      if (!GeoPulseController.enabled || gen != locationGeneration.get()) return@start
       onFixReceived()
       GeoPulseController.onLocationUpdate(location)
     }
@@ -168,11 +175,13 @@ class LocationService : Service() {
 
   private fun pauseLocationUpdates() {
     paused = true
+    locationGeneration.incrementAndGet() // invalidate the active callback
     engine?.stop()
   }
 
   private fun teardown() {
     watchdogHandler.removeCallbacks(watchdogTick)
+    locationGeneration.incrementAndGet() // invalidate the active callback
     motion?.stop()
     motion = null
     MotionManager.activeListener = null

@@ -54,6 +54,11 @@
 
 ### Performance
 
+- **No stale fixes after a pause or live reconfigure.** `LocationEngine.stop()`
+  drains already-queued fixes via `quitSafely()`, which fired the old callback
+  after a stationary pause or a `setConfig`-driven re-launch (the `enabled` gate
+  didn't catch these — tracking was still enabled). Each resume now tags its
+  callback with a generation counter and ignores fixes from a superseded one.
 - **Location callbacks now run on a dedicated background thread.** The native
   location stream was delivered on the main/UI looper, so the whole
   fusion → persistence → event pipeline ran on the main thread. It now runs on a
