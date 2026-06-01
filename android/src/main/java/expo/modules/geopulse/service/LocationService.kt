@@ -40,10 +40,12 @@ class LocationService : Service() {
   private var driving: DrivingEventsManager? = null
 
   // Outage watchdog: detects signal loss (tunnel, indoors) and recovery.
+  // These are written from the location worker thread (onFixReceived / resume)
+  // and read/written from the main-thread watchdog, so they must be @Volatile.
   private val watchdogHandler = Handler(Looper.getMainLooper())
-  private var lastFixElapsed = 0L
-  private var outageActive = false
-  private var paused = false
+  @Volatile private var lastFixElapsed = 0L
+  @Volatile private var outageActive = false
+  @Volatile private var paused = false
   // Bumped on every resume/pause/teardown. The location callback captures the
   // generation it was registered under and ignores fixes from a superseded one
   // (e.g. drained by quitSafely() on a pause or a config-driven re-launch).
@@ -105,6 +107,10 @@ class LocationService : Service() {
     // Resume GPS unless we're legitimately paused for being stationary. If
     // stop-on-stationary is off, motion never manages GPS, so a re-launch while
     // flagged paused must still resume — otherwise GPS could stay stuck off.
+    // Seed the watchdog baseline so a "first fix never arrives" case (permission
+    // revoked mid-session, location turned off) still surfaces as an outage,
+    // instead of the watchdog skipping forever on lastFixElapsed == 0.
+    if (lastFixElapsed == 0L) lastFixElapsed = SystemClock.elapsedRealtime()
     if (!paused || !GeoPulseController.config.stopOnStationary) resumeLocationUpdates()
     startMotionDetection()
     startDrivingDetection()

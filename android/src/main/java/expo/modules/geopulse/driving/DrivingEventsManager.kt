@@ -42,14 +42,16 @@ class DrivingEventsManager(
   private var sensor: Sensor? = null
   private var usingRawAccelerometer = false
 
-  // Horizontal acceleration low-pass for stable peak detection.
-  private var lastEventElapsed = 0L
-
-  // Speed/idle state, fed from GPS.
-  private var lastSpeedMps = 0.0
+  // onSpeed runs on the location worker thread; onSensorChanged on the main
+  // thread. These shared fields are @Volatile so the sensor thread sees the
+  // latest speed/braking trend instead of a stale cached value.
+  @Volatile private var lastEventElapsed = 0L
+  @Volatile private var lastSpeedMps = 0.0
   private var idleStartElapsed = 0L
   private var idlingReported = false
   private var speedingReported = false
+  // Guards a sensor event already queued when stop() ran from firing afterwards.
+  @Volatile private var stopped = false
 
   fun setParams(accel: Double, brake: Double, speedLimit: Double, idleTimeout: Long, minSpeed: Double) {
     harshAccelThreshold = accel
@@ -60,6 +62,7 @@ class DrivingEventsManager(
   }
 
   fun start() {
+    stopped = false
     val sm = sensorManager ?: return
     val linear = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
     if (linear != null) {
@@ -73,13 +76,20 @@ class DrivingEventsManager(
   }
 
   fun stop() {
+    stopped = true
     sensorManager?.unregisterListener(this)
     idleStartElapsed = 0L
     idlingReported = false
     speedingReported = false
+    // Also clear the speed/brake baseline so a stale value can't drive a phantom
+    // event if the manager is reused or a queued sensor event slips through.
+    lastSpeedMps = 0.0
+    decelerating = false
+    lastEventElapsed = 0L
   }
 
   override fun onSensorChanged(event: SensorEvent) {
+    if (stopped) return
     // Magnitude of horizontal acceleration. For the raw accelerometer we drop the
     // dominant gravity axis by using only the two smaller-variance axes' vector;
     // a simple robust proxy is the total magnitude minus ~g when near 9.81.
@@ -113,7 +123,7 @@ class DrivingEventsManager(
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-  private var decelerating = false
+  @Volatile private var decelerating = false
 
   /** Fed from the location pipeline on every fix. */
   fun onSpeed(speedMps: Double) {

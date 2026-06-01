@@ -35,6 +35,9 @@ object GeoPulseController {
   private const val MAX_SPEED_MPS = 100.0
   private const val PROCESS_NOISE = 3.0
   private const val DEFAULT_GET_LIMIT = 1000
+  // Battery must climb this far above the low-battery threshold (fraction, 0..1)
+  // before auto-degrade is undone, so it doesn't flap right at the boundary.
+  private const val BATTERY_RECOVERY_HYSTERESIS = 0.1
 
   // Tracking fields a named preset controls. Hand-tuning any of these (without
   // also passing `preset`) drops back to manual mode so the change sticks.
@@ -67,7 +70,9 @@ object GeoPulseController {
   // JS module thread) so its visibility must be guaranteed.
   @Volatile
   private var lastLocation: Map<String, Any?>? = null
-  private var lastAndroidLocation: Location? = null
+  // Read/written from the location worker thread and (via simulateLocation) the
+  // JS thread; volatile for safe publication of the reference.
+  @Volatile private var lastAndroidLocation: Location? = null
   private var fusion: KalmanBridge? = null
   // Serializes all native-handle access (create / process / reset / destroy) so
   // a config-driven rebuild on one thread can't free the handle while the
@@ -182,10 +187,16 @@ object GeoPulseController {
   private fun launchService() {
     val ctx = appContext ?: return
     val intent = Intent(ctx, LocationService::class.java)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      ctx.startForegroundService(intent)
-    } else {
-      ctx.startService(intent)
+    // Guard against ForegroundServiceStartNotAllowedException: re-launching to
+    // apply config (or a battery degrade) can happen while the app is in the
+    // background on Android 12+. The service is normally already running, but
+    // OEM/edge behavior varies, so never let a failed (re)start crash the caller.
+    runCatching {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        ctx.startForegroundService(intent)
+      } else {
+        ctx.startService(intent)
+      }
     }
   }
 
@@ -257,7 +268,7 @@ object GeoPulseController {
     if (cfg.url != null) {
       persist(map, cfg)
     }
-    geofenceManager?.onLocation(lat, lng)
+    feedGeofences(lat, lng)
 
     if (cfg.enableTripDetection) {
       ensureTripManager(cfg).onLocation(lat, lng, location.time)
@@ -333,19 +344,44 @@ object GeoPulseController {
   private val configLock = Any()
 
   private fun maybeDegradeForBattery() {
-    if (degradedForBattery) return
-    if (config.lowBatteryThreshold <= 0.0) return
+    // Skip entirely only when the feature is off AND we're not currently degraded
+    // (we still need to check for recovery while degraded).
+    if (config.lowBatteryThreshold <= 0.0 && !degradedForBattery) return
     val ctx = appContext ?: return
     val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager ?: return
     val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
     if (level < 0) return
+    val charging = bm.isCharging
+
+    if (degradedForBattery) {
+      // Recovery: restore the pre-degrade config once charging, or once the level
+      // climbs back above the threshold plus hysteresis (avoids flapping at the
+      // boundary). Without this, eco mode would stick for the whole session.
+      val recovered = synchronized(configLock) {
+        if (!degradedForBattery) return@synchronized false
+        val thr = preDegradeConfig?.lowBatteryThreshold ?: 0.0
+        if (charging || (thr > 0.0 && level / 100.0 >= thr + BATTERY_RECOVERY_HYSTERESIS)) {
+          preDegradeConfig?.let { config = it }
+          clearBatteryDegradeState()
+          true
+        } else {
+          false
+        }
+      }
+      if (recovered) {
+        emit("onError", mapOf("code" to "BATTERY_OK", "message" to "Tracking restored to normal accuracy (battery $level%)."))
+        launchService()
+      }
+      return
+    }
+
     val degraded = synchronized(configLock) {
       // Re-check under the lock; setConfig/start may have just run on another
       // thread. Read the current config here so we degrade from the latest one.
       val base = config
       if (degradedForBattery || base.lowBatteryThreshold <= 0.0) {
         false
-      } else if (level / 100.0 <= base.lowBatteryThreshold && !bm.isCharging) {
+      } else if (level / 100.0 <= base.lowBatteryThreshold && !charging) {
         preDegradeConfig = base
         degradedForBattery = true
         config = base.copy().resolvePreset(forceEco = true)
@@ -431,6 +467,19 @@ object GeoPulseController {
     return geofenceManager ?: GeofenceManager(ctx).also { geofenceManager = it }
   }
 
+  /**
+   * Feed a fix to the geofence reconciler. On the restore path (boot/process
+   * restart) `geofenceManager` is null because nothing on the tracking path
+   * built it; create it lazily, but only if geofences were actually persisted —
+   * so apps that don't use geofencing pay nothing.
+   */
+  private fun feedGeofences(lat: Double, lng: Double) {
+    geofenceManager?.let { it.onLocation(lat, lng); return }
+    val ctx = appContext ?: return
+    GeofenceManager.ensureRestored(ctx)
+    if (GeofenceManager.hasAny()) geofences()?.onLocation(lat, lng)
+  }
+
   fun addGeofence(map: Map<String, Any?>) {
     geofences()?.add(GeofenceManager.specFromMap(map))
   }
@@ -509,7 +558,7 @@ object GeoPulseController {
 
   private fun store(): LocationStore? {
     val ctx = appContext ?: return null
-    return store ?: LocationStore(ctx).also { store = it }
+    return store ?: LocationStore.getInstance(ctx).also { store = it }
   }
 
   private fun persist(map: Map<String, Any?>, cfg: GeoPulseConfig) {
@@ -591,20 +640,24 @@ object GeoPulseController {
       return
     }
     ioExecutor.execute {
-      val batch = runCatching {
-        locationStore.getAll(if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250)
-      }.getOrDefault(emptyList())
-      if (batch.isEmpty()) {
-        onResult(emptyList())
-        return@execute
-      }
-      val body = "[" + batch.joinToString(",") { it.json } + "]"
-      val result = HttpUploader.upload(url, cfg.httpMethod, cfg.headers, body)
-      if (result.success) {
-        runCatching { locationStore.deleteByIds(batch.map { it.id }) }
-        onResult(batch.map { Json.toMap(it.json) })
-      } else {
-        onResult(null)
+      // Serialize with the WorkManager sync path so the same rows can't be
+      // claimed and uploaded twice.
+      synchronized(LocationStore.syncLock) {
+        val batch = runCatching {
+          locationStore.getAll(if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250)
+        }.getOrDefault(emptyList())
+        if (batch.isEmpty()) {
+          onResult(emptyList())
+          return@execute
+        }
+        val body = "[" + batch.joinToString(",") { it.json } + "]"
+        val result = HttpUploader.upload(url, cfg.httpMethod, cfg.headers, body)
+        if (result.success) {
+          runCatching { locationStore.deleteByIds(batch.map { it.id }) }
+          onResult(batch.map { Json.toMap(it.json) })
+        } else {
+          onResult(null)
+        }
       }
     }
   }

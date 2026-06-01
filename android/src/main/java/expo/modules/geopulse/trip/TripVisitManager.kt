@@ -76,6 +76,11 @@ class TripVisitManager(
   private var clusterLng = 0.0
   private var clusterCount = 0
   private var clusterFirstTime = 0L
+  // Trip distance/points at the moment the candidate cluster started, so that if
+  // it confirms as a visit we can roll back the stationary GPS jitter that
+  // accumulated during the dwell window (it isn't real travel).
+  private var clusterTripDistance = 0.0
+  private var clusterTripPointCount = 0
 
   private var currentVisit: Visit? = null   // confirmed visit we are currently inside
   private var currentTrip: Trip? = null     // trip in progress (between visits)
@@ -152,6 +157,10 @@ class TripVisitManager(
     clusterLng = lng
     clusterCount = 1
     clusterFirstTime = time
+    currentTrip?.let {
+      clusterTripDistance = it.distanceMeters
+      clusterTripPointCount = it.pointCount
+    }
   }
 
   private fun confirmVisit(timeMs: Long) {
@@ -164,11 +173,16 @@ class TripVisitManager(
     )
     currentVisit = visit
     clusterCount = 0
-    // Arriving somewhere ends any in-progress trip.
+    // Arriving somewhere ends any in-progress trip. Align the trip's end with the
+    // arrival (cluster start), not the confirm time ~minVisitDwell later, and roll
+    // back the in-cluster GPS jitter so the trip distance/duration aren't inflated
+    // by the time spent parked.
     currentTrip?.let { trip ->
+      trip.distanceMeters = clusterTripDistance
+      trip.pointCount = clusterTripPointCount
       trip.endLat = clusterLat
       trip.endLng = clusterLng
-      trip.endTime = timeMs
+      trip.endTime = clusterFirstTime
       listener?.onTripEnd(trip)
       currentTrip = null
     }

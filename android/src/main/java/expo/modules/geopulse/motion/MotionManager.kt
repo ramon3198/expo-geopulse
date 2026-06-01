@@ -34,13 +34,19 @@ class MotionManager(private val context: Context) {
   private var sensorManager: SensorManager? = null
   private var significantMotion: Sensor? = null
   private var triggerListener: TriggerEventListener? = null
+  // The significant-motion trigger fires on the main thread and re-arms itself;
+  // this guards against a trigger that was already queued when stop() ran from
+  // re-arming a dead manager and firing the (possibly swapped) listener.
+  @Volatile private var stopped = false
 
   fun start() {
+    stopped = false
     requestActivityTransitions()
     registerSignificantMotion()
   }
 
   fun stop() {
+    stopped = true
     removeActivityTransitions()
     unregisterSignificantMotion()
     lastMoving = null
@@ -100,6 +106,9 @@ class MotionManager(private val context: Context) {
     val sensor = significantMotion ?: return
     val listener = object : TriggerEventListener() {
       override fun onTrigger(event: TriggerEvent?) {
+        // Ignore a trigger that fired after stop(), or one from a superseded
+        // listener instance (a new arm replaced this one).
+        if (stopped || triggerListener !== this) return
         activeListener?.onMotionChange(true)
         // TYPE_SIGNIFICANT_MOTION is one-shot; re-arm for the next motion.
         armSignificantMotion()
@@ -112,9 +121,12 @@ class MotionManager(private val context: Context) {
   private fun unregisterSignificantMotion() {
     val sm = sensorManager ?: return
     val sensor = significantMotion ?: return
-    val listener = triggerListener ?: return
-    runCatching { sm.cancelTriggerSensor(listener, sensor) }
+    triggerListener?.let { runCatching { sm.cancelTriggerSensor(it, sensor) } }
     triggerListener = null
+    // Fully inert after stop: drop the sensor references too, so a racing
+    // re-arm can't find a usable sensor.
+    sensorManager = null
+    significantMotion = null
   }
 
   companion object {
