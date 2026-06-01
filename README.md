@@ -2,6 +2,8 @@
 
 > Open-source background geolocation SDK for **React Native + Expo** (Android), with **C++/NDK Kalman sensor fusion**, battery-smart motion detection, geofencing, and offline sync.
 
+[![CI](https://github.com/ramon3198/expo-geopulse/actions/workflows/ci.yml/badge.svg)](https://github.com/ramon3198/expo-geopulse/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/expo-geopulse.svg)](https://www.npmjs.com/package/expo-geopulse)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![platform: Android](https://img.shields.io/badge/platform-Android-3ddc84.svg)](#)
 [![New Architecture](https://img.shields.io/badge/React%20Native-New%20Architecture-61dafb.svg)](#)

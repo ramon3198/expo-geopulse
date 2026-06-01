@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typescript:
+    name: TypeScript build & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install module dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (src + plugin)
+        run: npm run prepare
+        env:
+          CI: "true"
+
+      - name: Typecheck the example app
+        working-directory: example
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+
+  fusion-core:
+    name: C++ Kalman/fusion host test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & run the fusion core test
+        working-directory: android/src/main/cpp
+        run: |
+          g++ -std=c++17 -O2 kalman.cpp fusion.cpp test_fusion.cpp -o test_fusion
+          ./test_fusion
