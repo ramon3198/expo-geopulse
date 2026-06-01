@@ -101,10 +101,14 @@ object GeoPulseController {
 
   /** Merge only the provided keys onto the current config (does NOT replace it). */
   fun setConfig(patch: Map<String, Any?>) {
-    // Compute the merge on a fresh copy and publish it atomically via the
-    // @Volatile `config` reference, instead of mutating the live config in place
-    // (the location worker thread reads it concurrently).
-    val merged = config.copy().applyMap(patch)
+    // Merge onto the user's real config, not a temporary battery-degraded one —
+    // otherwise e.g. setConfig({ url }) during a low-battery degrade would freeze
+    // the eco cadence in place. clearBatteryDegradeState() below then lets
+    // auto-degrade re-apply from the new config if the battery is still low.
+    // Compute on a fresh copy and publish it atomically via the @Volatile
+    // `config` reference (the location worker thread reads it concurrently).
+    val base = preDegradeConfig ?: config
+    val merged = base.copy().applyMap(patch)
     // If the caller hand-tuned a preset-controlled tracking field without also
     // naming a preset, switch to manual mode so resolvePreset() below doesn't
     // silently overwrite that change.
