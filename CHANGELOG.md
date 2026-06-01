@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2
+
+### Bug fixes
+
+- **`setConfig` now merges instead of replacing.** Previously it overwrote the
+  entire native config, so e.g. `setConfig({ preset: 'eco' })` silently wiped
+  `url` / `autoSync` / trip & driving detection. Only the fields you pass are now
+  applied; everything else is preserved.
+- **MapView (dashboard):** repaint current route/visits when the map style
+  finishes loading, so the initial track isn't lost on a data-before-load race.
+
+### Others
+
+- `ensurePermissions().granted` documented: it means foreground + GPS are ready
+  (tracking can start); background ("Allow all the time") is reported separately.
+- Dashboard lint is clean (typed WS events; refs updated in effects, not render).
+
 ## 0.2.0
 
 High-level, "just works" developer experience (inspired by Python SDKs), layered
