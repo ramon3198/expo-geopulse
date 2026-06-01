@@ -6,3 +6,12 @@ export { default as GeoPulseNativeModule } from './ExpoGeopulseModule';
 
 // Public types & enums.
 export * from './ExpoGeopulse.types';
+
+// High-level convenience types (track(), on(), ensurePermissions()).
+export type {
+  TrackMode,
+  TrackOptions,
+  PermissionResult,
+  Tracker,
+  EventName,
+} from './convenience.types';

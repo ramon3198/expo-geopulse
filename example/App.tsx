@@ -126,23 +126,15 @@ export default function App() {
 
   const handleStart = async () => {
     try {
-      setStatus('Requesting permissions…');
-      const p = await GeoPulse.requestPermissions();
-      setPerms(p);
-      if (!p.fine && !p.coarse) {
-        setStatus('Location permission denied');
-        append('error  location permission denied');
+      // The whole permission flow (foreground -> GPS -> background) in one call.
+      setStatus('Checking permissions…');
+      const perm = await GeoPulse.ensurePermissions({ background: true });
+      await refreshPerms();
+      if (!perm.granted) {
+        const msg = perm.reason === 'location_off' ? 'Location is off' : 'Permission denied';
+        setStatus(msg);
+        append(`error  ${perm.reason}`);
         return;
-      }
-      if (!p.locationServicesEnabled) {
-        setStatus('Turn on location…');
-        const ok = await GeoPulse.requestEnableLocation();
-        await refreshPerms();
-        if (!ok) {
-          setStatus('Location is off');
-          append('error  location services are off');
-          return;
-        }
       }
       const state = await GeoPulse.start();
       setEnabled(state.enabled);

@@ -120,36 +120,66 @@ The foreground service, boot receiver and core permissions are merged automatica
 
 ## Quickstart
 
+**One line to start tracking** — `track()` requests permissions, turns on GPS,
+configures, and starts the background service for you:
+
+```ts
+import GeoPulse from 'expo-geopulse';
+
+const tracker = await GeoPulse.track((location) => {
+  console.log(location.coords.latitude, location.coords.longitude);
+});
+
+// ...later
+await tracker.stop();
+```
+
+Tune it with friendly options (no enums needed):
+
+```ts
+const tracker = await GeoPulse.track(onLocation, {
+  mode: 'high',                 // 'eco' | 'balanced' | 'high'
+  background: true,             // "Allow all the time"
+  trips: true,                  // emit onVisit / onTrip
+  driving: true,                // emit harsh-braking / speeding / ...
+  url: 'https://api.example.com/locations',  // auto-upload
+  notification: { title: 'Tracking', text: 'Recording your route' },
+});
+```
+
+Subscribe to anything with a single `on(...)`, and handle errors by `code`:
+
+```ts
+const sub = GeoPulse.on('trip', (e) => console.log(e.action, e.trip.distanceMeters));
+GeoPulse.on('driving', (e) => console.log(e.type, e.severity));
+sub.remove();
+
+try {
+  await GeoPulse.track(onLocation);
+} catch (e) {
+  if (e.code === 'PERMISSION_DENIED') promptUser();
+  if (e.code === 'LOCATION_OFF') askToEnableGps();
+}
+
+// A single fresh fix:
+const here = await GeoPulse.currentPosition();
+```
+
+<details>
+<summary>Prefer fine-grained control? The full API is still there.</summary>
+
 ```ts
 import GeoPulse, { Accuracy } from 'expo-geopulse';
 
-// 1. Configure
-await GeoPulse.ready({
-  desiredAccuracy: Accuracy.High,
-  distanceFilter: 10,
-  stopOnStationary: true,
-  enableKalman: true,
-  url: 'https://api.example.com/locations', // optional auto-upload endpoint
-  autoSync: true,
-  notification: { title: 'Tracking active', text: 'Recording your route' },
-});
-
-// 2. Ask for permissions (shows the system dialog)
+await GeoPulse.ready({ desiredAccuracy: Accuracy.High, distanceFilter: 10, enableKalman: true });
 await GeoPulse.requestPermissions();
-
-// 3. Subscribe to events
-const sub = GeoPulse.onLocation((location) => {
-  console.log(location.coords.latitude, location.coords.longitude, location.provider);
-});
-GeoPulse.onMotionChange((e) => console.log('moving:', e.isMoving));
-GeoPulse.onGeofence((e) => console.log(e.action, e.identifier));
-
-// 4. Start / stop background tracking
+const sub = GeoPulse.onLocation((loc) => console.log(loc.coords));
 await GeoPulse.start();
 // ...
 await GeoPulse.stop();
 sub.remove();
 ```
+</details>
 
 ---
 

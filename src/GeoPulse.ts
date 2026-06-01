@@ -19,6 +19,13 @@ import type {
   Trip,
   DrivingEvent,
 } from './ExpoGeopulse.types';
+import {
+  MODE_TO_ACCURACY,
+  type EventName,
+  type PermissionResult,
+  type TrackOptions,
+  type Tracker,
+} from './convenience.types';
 
 /**
  * High-level, promise-based facade over the native module.
@@ -212,6 +219,148 @@ class GeoPulse {
   /** Fires on harsh braking/acceleration, speeding or idling. Requires `enableDrivingEvents`. */
   onDrivingEvent(listener: (event: DrivingEvent) => void): EventSubscription {
     return NativeModule.addListener('onDrivingEvent', listener);
+  }
+
+  // ---- high-level convenience (the "just works" API) ----
+
+  /**
+   * Start tracking in **one call**: requests permissions, turns on GPS if
+   * needed, applies a sensible config, starts the background service, and streams
+   * locations to your callback. Returns a handle with `stop()`.
+   *
+   * ```ts
+   * const tracker = await GeoPulse.track((loc) => console.log(loc.coords));
+   * // ...later
+   * await tracker.stop();
+   * ```
+   *
+   * Throws a coded error (`PERMISSION_DENIED` / `LOCATION_OFF`) if it can't start.
+   */
+  async track(
+    onLocation: (location: Location) => void,
+    options: TrackOptions = {}
+  ): Promise<Tracker> {
+    const { mode = 'balanced', background = true } = options;
+
+    const perm = await this.ensurePermissions({ background });
+    if (!perm.granted) {
+      const err = new Error(
+        perm.reason === 'location_off'
+          ? 'Location services are turned off.'
+          : 'Location permission was not granted.'
+      ) as Error & { code: string };
+      err.code = perm.reason === 'location_off' ? 'LOCATION_OFF' : 'PERMISSION_DENIED';
+      throw err;
+    }
+
+    await this.ready({
+      desiredAccuracy: MODE_TO_ACCURACY[mode],
+      preset: mode === 'balanced' ? 'standard' : mode,
+      distanceFilter: options.distanceFilter,
+      enableTripDetection: options.trips,
+      enableDrivingEvents: options.driving,
+      url: options.url,
+      autoSync: options.url != null,
+      headers: options.headers,
+      notification: options.notification,
+    });
+
+    const sub = this.onLocation(onLocation);
+    await this.start();
+
+    const stop = async () => {
+      sub.remove();
+      await this.stop();
+    };
+    return { stop, remove: stop };
+  }
+
+  /**
+   * Run the full permission flow (foreground → background → GPS) and report the
+   * outcome — no need to orchestrate `requestPermissions` / `requestEnableLocation`
+   * / `requestBackgroundPermission` by hand.
+   */
+  async ensurePermissions(options: { background?: boolean } = {}): Promise<PermissionResult> {
+    const { background = true } = options;
+
+    let status = await this.requestPermissions();
+    if (!status.fine && !status.coarse) {
+      return {
+        granted: false,
+        foreground: false,
+        background: false,
+        locationServicesEnabled: status.locationServicesEnabled,
+        reason: 'foreground_denied',
+      };
+    }
+
+    if (!status.locationServicesEnabled) {
+      const on = await this.requestEnableLocation();
+      status = await this.getProviderState();
+      if (!on && !status.locationServicesEnabled) {
+        return {
+          granted: false,
+          foreground: true,
+          background: status.background,
+          locationServicesEnabled: false,
+          reason: 'location_off',
+        };
+      }
+    }
+
+    if (background && !status.background) {
+      status = await this.requestBackgroundPermission();
+      // Note: on Android 11+ the OS may require Settings; caller can check `background`.
+    }
+
+    return {
+      granted: true,
+      foreground: status.fine || status.coarse,
+      background: status.background,
+      locationServicesEnabled: status.locationServicesEnabled,
+      reason: background && !status.background ? 'background_denied' : undefined,
+    };
+  }
+
+  /** Short alias for {@link getCurrentPosition} — a single fresh fix. */
+  currentPosition(): Promise<Location> {
+    return this.getCurrentPosition();
+  }
+
+  /**
+   * One subscriber for every event, by name:
+   * `on('location' | 'motion' | 'activity' | 'geofence' | 'provider' | 'heartbeat'
+   *     | 'error' | 'visit' | 'trip' | 'driving', cb)`.
+   *
+   * ```ts
+   * const sub = GeoPulse.on('trip', (e) => console.log(e.action));
+   * sub.remove();
+   * ```
+   */
+  on(event: 'location', cb: (e: Location) => void): EventSubscription;
+  on(event: 'motion', cb: (e: MotionChangeEvent) => void): EventSubscription;
+  on(event: 'activity', cb: (e: ActivityChangeEvent) => void): EventSubscription;
+  on(event: 'geofence', cb: (e: GeofenceEvent) => void): EventSubscription;
+  on(event: 'provider', cb: (e: ProviderChangeEvent) => void): EventSubscription;
+  on(event: 'heartbeat', cb: (e: HeartbeatEvent) => void): EventSubscription;
+  on(event: 'error', cb: (e: GeoPulseError) => void): EventSubscription;
+  on(event: 'visit', cb: (e: VisitEvent) => void): EventSubscription;
+  on(event: 'trip', cb: (e: TripEvent) => void): EventSubscription;
+  on(event: 'driving', cb: (e: DrivingEvent) => void): EventSubscription;
+  on(event: EventName, cb: (e: never) => void): EventSubscription {
+    const map: Record<EventName, string> = {
+      location: 'onLocation',
+      motion: 'onMotionChange',
+      activity: 'onActivityChange',
+      geofence: 'onGeofence',
+      provider: 'onProviderChange',
+      heartbeat: 'onHeartbeat',
+      error: 'onError',
+      visit: 'onVisit',
+      trip: 'onTrip',
+      driving: 'onDrivingEvent',
+    };
+    return NativeModule.addListener(map[event] as never, cb as never);
   }
 
   // ---- debug / testing ----
