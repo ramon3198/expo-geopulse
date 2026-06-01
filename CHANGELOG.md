@@ -8,7 +8,9 @@
   `setConfig` that changes accuracy) freed the native handle while the location
   worker thread could be mid-`process()` — a use-after-free / native crash. All
   native-handle access (create / process / reset / destroy) is now serialized
-  under a single lock.
+  under a single lock. The engine is also (re)built from the *current* config, so
+  an in-flight fix carrying an older config snapshot can't recreate it with stale
+  accuracy/Kalman settings.
 - **`setConfig` no longer mutates the live config in place.** It merged onto the
   shared config object and returned the same instance, so the location worker
   thread could read a half-applied (or, for 64-bit fields, torn) config. Changes

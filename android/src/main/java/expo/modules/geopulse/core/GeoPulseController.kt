@@ -180,7 +180,7 @@ object GeoPulseController {
     var filtered = false
     var provider = location.provider ?: "fused"
 
-    val r = fuse(cfg, lat, lng, accuracy, location.time)
+    val r = fuse(lat, lng, accuracy, location.time)
     if (r != null) {
       if (!r.accepted) return // outlier or below accuracy threshold -> drop
       lat = r.latitude
@@ -409,19 +409,24 @@ object GeoPulseController {
    * available (caller then applies the Kotlin accuracy gate).
    */
   private fun fuse(
-    cfg: GeoPulseConfig,
     lat: Double,
     lng: Double,
     accuracy: Double,
     timeMs: Long,
   ): KalmanBridge.Result? = synchronized(fusionLock) {
-    ensureFusion(cfg)?.process(lat, lng, accuracy, timeMs)
+    ensureFusion()?.process(lat, lng, accuracy, timeMs)
   }
 
-  /** Must be called while holding [fusionLock]. */
-  private fun ensureFusion(cfg: GeoPulseConfig): KalmanBridge? {
+  /**
+   * Must be called while holding [fusionLock]. Builds the engine from the
+   * *current* [config], not a fix's captured snapshot — otherwise an in-flight
+   * fix that captured an older config could recreate the engine with stale
+   * params right after a rebuild, and later fixes would reuse that stale engine.
+   */
+  private fun ensureFusion(): KalmanBridge? {
     fusion?.let { return it }
     if (!KalmanBridge.isAvailable()) return null
+    val cfg = config
     return try {
       KalmanBridge(cfg.enableKalman, cfg.accuracyFilter, MAX_SPEED_MPS, PROCESS_NOISE)
         .also { fusion = it }
