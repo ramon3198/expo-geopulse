@@ -54,6 +54,9 @@ object GeoPulseController {
   @Volatile
   var odometer: Double = 0.0
 
+  // Read from several threads (location worker, motion/driving detectors, the
+  // JS module thread) so its visibility must be guaranteed.
+  @Volatile
   private var lastLocation: Map<String, Any?>? = null
   private var lastAndroidLocation: Location? = null
   private var fusion: KalmanBridge? = null

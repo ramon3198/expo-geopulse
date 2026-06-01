@@ -6,6 +6,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.HandlerThread
 import android.os.Looper
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
@@ -44,16 +45,23 @@ class LocationEngine(private val context: Context) {
   private var fusedCallback: LocationCallback? = null
   private var locationManager: LocationManager? = null
   private var rawListener: LocationListener? = null
+  // Dedicated background thread for delivering location callbacks, so the
+  // fusion → persistence → event pipeline never runs on (and blocks) the
+  // app's main/UI looper.
+  private var handlerThread: HandlerThread? = null
 
   @SuppressLint("MissingPermission")
   fun start(config: GeoPulseConfig, listener: LocationUpdateListener) {
     if (!PermissionsManager.hasLocationPermission(context)) return
     stop() // idempotent: never double-register listeners
-    if (usesGms) startFused(config, listener) else startRaw(config, listener)
+    val thread = HandlerThread("geopulse-location").also { it.start() }
+    handlerThread = thread
+    val looper = thread.looper
+    if (usesGms) startFused(config, listener, looper) else startRaw(config, listener, looper)
   }
 
   @SuppressLint("MissingPermission")
-  private fun startFused(config: GeoPulseConfig, listener: LocationUpdateListener) {
+  private fun startFused(config: GeoPulseConfig, listener: LocationUpdateListener, looper: Looper) {
     val client = LocationServices.getFusedLocationProviderClient(context)
     fusedClient = client
     val request = LocationRequest.Builder(toGmsPriority(config.desiredAccuracy), config.locationUpdateInterval)
@@ -67,11 +75,11 @@ class LocationEngine(private val context: Context) {
       }
     }
     fusedCallback = callback
-    client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    client.requestLocationUpdates(request, callback, looper)
   }
 
   @SuppressLint("MissingPermission")
-  private fun startRaw(config: GeoPulseConfig, listener: LocationUpdateListener) {
+  private fun startRaw(config: GeoPulseConfig, listener: LocationUpdateListener, looper: Looper) {
     val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     locationManager = lm
     val provider = when {
@@ -87,7 +95,7 @@ class LocationEngine(private val context: Context) {
       config.locationUpdateInterval,
       config.distanceFilter.toFloat(),
       l,
-      Looper.getMainLooper(),
+      looper,
     )
   }
 
@@ -98,6 +106,9 @@ class LocationEngine(private val context: Context) {
     rawListener?.let { locationManager?.removeUpdates(it) }
     rawListener = null
     locationManager = null
+    // Drain any already-queued callback, then tear the thread down.
+    handlerThread?.quitSafely()
+    handlerThread = null
   }
 
   @SuppressLint("MissingPermission")

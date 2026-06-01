@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- **Location callbacks now run on a dedicated background thread.** The native
+  location stream was delivered on the main/UI looper, so the whole
+  fusion → persistence → event pipeline ran on the main thread. It now runs on a
+  dedicated `HandlerThread` (`geopulse-location`), torn down on `stop()`, keeping
+  the app's main thread free. `lastLocation` is now `@Volatile` for safe
+  cross-thread reads.
+
 ## 0.2.2
 
 ### Bug fixes
