@@ -185,7 +185,15 @@ sub.remove();
 
 ## API
 
-### Lifecycle & tracking
+### High-level (recommended)
+The "just works" layer — most apps only need these:
+- `track(onLocation, options?): Promise<Tracker>` — request permissions + turn on GPS + configure + start, in one call. Returns `{ stop() }`. Throws coded errors (`PERMISSION_DENIED` / `LOCATION_OFF`).
+- `ensurePermissions({ background? }): Promise<PermissionResult>` — run the full foreground → GPS → background flow; returns `{ granted, reason, ... }`.
+- `on(event, cb): EventSubscription` — one typed subscriber for every event: `'location' | 'motion' | 'activity' | 'geofence' | 'provider' | 'heartbeat' | 'error' | 'visit' | 'trip' | 'driving'`.
+- `currentPosition(): Promise<Location>` — a single fresh fix (alias of `getCurrentPosition`).
+- `TrackOptions`: `mode` (`'eco' | 'balanced' | 'high'`) · `background` · `trips` · `driving` · `url` · `headers` · `notification` · `distanceFilter`.
+
+### Lifecycle & tracking (low-level)
 - `ready(config?): Promise<GeoPulseState>` — apply config; call once before `start()`
 - `setConfig(config): Promise<GeoPulseState>` — update config while running
 - `start(): Promise<GeoPulseState>` / `stop(): Promise<GeoPulseState>`
