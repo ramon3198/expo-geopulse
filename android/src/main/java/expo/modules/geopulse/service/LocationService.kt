@@ -97,9 +97,10 @@ class LocationService : Service() {
       stopTrackingAndSelf()
       return
     }
-    // Don't force GPS back on if we're paused for being stationary (e.g. a
-    // re-launch to apply new config); the next motion-driven resume picks it up.
-    if (!paused) resumeLocationUpdates()
+    // Resume GPS unless we're legitimately paused for being stationary. If
+    // stop-on-stationary is off, motion never manages GPS, so a re-launch while
+    // flagged paused must still resume — otherwise GPS could stay stuck off.
+    if (!paused || !GeoPulseController.config.stopOnStationary) resumeLocationUpdates()
     startMotionDetection()
     startDrivingDetection()
     watchdogHandler.removeCallbacks(watchdogTick)

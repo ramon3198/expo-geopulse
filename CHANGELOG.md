@@ -4,6 +4,18 @@
 
 ### Bug fixes
 
+- **Buffered locations sync after a process restart.** When WorkManager ran the
+  sync worker in a fresh process (after an app kill or reboot), the in-memory
+  config was still default (`url == null`), so the worker reported success and
+  dropped the upload. It now falls back to the persisted config, so a backlog
+  buffered before the restart still uploads.
+- **GPS can't get stuck paused.** With stop-on-stationary disabled, a re-launch
+  while flagged paused could leave GPS off (motion never resumes it in that mode).
+  The service now always resumes GPS when stop-on-stationary is off.
+- **Battery auto-degrade is now reversible.** Dropping to eco on low battery
+  remembered nothing, so the original accuracy was lost. The pre-degrade config
+  is now restored on the next `start()` (and superseded by an explicit
+  `ready()` / `setConfig()`); auto-degrade re-applies if the battery is still low.
 - **`setConfig` now actually applies while tracking is running.** It updated the
   stored config but never reconfigured the live foreground service, so changing
   `preset` / intervals / `distanceFilter` left the real GPS request — and

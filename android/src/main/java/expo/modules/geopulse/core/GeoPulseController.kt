@@ -94,6 +94,7 @@ object GeoPulseController {
 
   fun ready(cfg: GeoPulseConfig) {
     config = cfg.resolvePreset()
+    clearBatteryDegradeState()
     rebuildFusion()
     persistConfig(config)
   }
@@ -111,6 +112,7 @@ object GeoPulseController {
       merged.preset = ""
     }
     config = merged.resolvePreset()
+    clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
     rebuildFusion()
     persistConfig(config)
     // Apply "while running": re-issue the GPS request and reconcile driving
@@ -139,8 +141,19 @@ object GeoPulseController {
 
   fun start() {
     enabled = true
-    degradedForBattery = false
+    // Fresh start at the configured accuracy: undo any prior battery auto-degrade
+    // (it re-applies on the next fix if the battery is still low).
+    if (degradedForBattery) {
+      preDegradeConfig?.let { config = it }
+      clearBatteryDegradeState()
+    }
     launchService()
+  }
+
+  /** Forget any battery auto-degrade state (an explicit config is authoritative). */
+  private fun clearBatteryDegradeState() {
+    degradedForBattery = false
+    preDegradeConfig = null
   }
 
   /**
@@ -289,10 +302,15 @@ object GeoPulseController {
 
   /**
    * If a low-battery threshold is configured and the device is at/below it (and
-   * not charging), collapse to the eco preset once. Restores normal cadence the
-   * next time JS calls ready()/setConfig().
+   * not charging), collapse to the eco preset once, remembering the prior config.
+   * The original cadence is restored on the next `start()` (or replaced when JS
+   * calls `ready()` / `setConfig()`).
    */
-  private var degradedForBattery = false
+  @Volatile private var degradedForBattery = false
+  // The config in effect just before a low-battery auto-degrade, so start() can
+  // restore it (auto-degrade then re-applies on the next fix if still low).
+  @Volatile private var preDegradeConfig: GeoPulseConfig? = null
+
   private fun maybeDegradeForBattery(cfg: GeoPulseConfig) {
     if (cfg.lowBatteryThreshold <= 0.0 || degradedForBattery) return
     val ctx = appContext ?: return
@@ -300,6 +318,7 @@ object GeoPulseController {
     val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
     if (level < 0) return
     if (level / 100.0 <= cfg.lowBatteryThreshold && !bm.isCharging) {
+      preDegradeConfig = cfg
       degradedForBattery = true
       config = cfg.copy().resolvePreset(forceEco = true)
       emit("onError", mapOf("code" to "BATTERY_LOW", "message" to "Tracking degraded to eco mode (battery $level%)."))

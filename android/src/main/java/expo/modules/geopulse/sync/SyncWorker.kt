@@ -8,6 +8,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import expo.modules.geopulse.core.ConfigStore
+import expo.modules.geopulse.core.GeoPulseConfig
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.db.LocationStore
 
@@ -18,7 +20,16 @@ import expo.modules.geopulse.db.LocationStore
  */
 class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
   override fun doWork(): Result {
-    val config = GeoPulseController.config
+    var config = GeoPulseController.config
+    if (config.url == null) {
+      // WorkManager can run us in a fresh process (after the app was killed, or
+      // after a reboot) where the in-memory controller config is still default.
+      // Fall back to the persisted config so a backlog buffered before the
+      // restart still uploads instead of being silently dropped.
+      runCatching { ConfigStore(applicationContext).loadConfig() }
+        .getOrNull()
+        ?.let { config = GeoPulseConfig.fromMap(it) }
+    }
     val url = config.url ?: return Result.success()
 
     val store = LocationStore(applicationContext)
