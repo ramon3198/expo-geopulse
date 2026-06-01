@@ -29,8 +29,10 @@ class GeofenceReceiver : BroadcastReceiver() {
     for (geofence in triggering) {
       val spec = GeofenceManager.specFor(geofence.requestId) ?: continue
       // Polygon refinement: a polygon is registered as its bounding circle, so
-      // only fire when the triggering point is truly inside the polygon.
-      if (spec.isPolygon && location != null && spec.vertices != null) {
+      // for ENTER/DWELL only fire when the point is truly inside the polygon.
+      // EXIT is left as-is: leaving the bounding circle is necessarily outside
+      // the polygon, so the point-in-polygon test would wrongly drop every EXIT.
+      if (spec.isPolygon && action != "EXIT" && location != null && spec.vertices != null) {
         if (!GeofenceManager.pointInPolygon(location.latitude, location.longitude, spec.vertices)) {
           continue
         }

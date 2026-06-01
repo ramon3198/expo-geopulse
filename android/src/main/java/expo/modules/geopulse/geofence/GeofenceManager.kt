@@ -9,7 +9,9 @@ import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.tasks.Tasks
 import expo.modules.geopulse.core.GeoPulseController
+import java.util.concurrent.Executors
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
@@ -89,8 +91,17 @@ class GeofenceManager(private val context: Context) {
     if (moved) reconcile(force = false)
   }
 
-  @SuppressLint("MissingPermission")
+  // All reconciliation runs on one thread so concurrent triggers (location
+  // worker vs. JS add/remove) can't interleave their Play Services calls or
+  // corrupt registeredIds.
+  private val reconcileExecutor = Executors.newSingleThreadExecutor()
+
   private fun reconcile(force: Boolean) {
+    runCatching { reconcileExecutor.execute { reconcileNow() } }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun reconcileNow() {
     val all = getAll()
     if (all.isEmpty()) {
       removeAll()
@@ -104,46 +115,38 @@ class GeofenceManager(private val context: Context) {
     } else {
       all.take(MAX_ACTIVE)
     }
-
-    val selectedIds = selected.map { it.identifier }.toSet()
-    // Remove geofences that dropped out of the nearest set so the OS-registered
-    // count never grows past MAX_ACTIVE as the device roams the full registry
-    // (Play Services only adds/updates the ids we pass; it doesn't drop others).
-    val stale = synchronized(registry) { registeredIds - selectedIds }
-    if (stale.isNotEmpty()) runCatching { client.removeGeofences(stale.toList()) }
-
     val geofences = selected.map { it.toGeofence() }
     if (geofences.isEmpty()) return
+    val selectedIds = selected.map { it.identifier }.toSet()
+    val stale = synchronized(registry) { registeredIds - selectedIds }
 
     val request = GeofencingRequest.Builder()
       .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
       .addGeofences(geofences)
       .build()
 
-    // Mark the new set as registered only once Play Services confirms the add.
-    // addGeofences is async — on async failure (e.g. too many geofences, location
-    // off) we must NOT record them as registered or advance lastReg, so a later
-    // reconcile retries instead of believing a failed registration succeeded.
+    // Await each step in order: remove stale BEFORE adding, so the OS-registered
+    // count can't transiently exceed the 100 cap, and record state only once the
+    // add is confirmed. Running on the single reconcile thread, Tasks.await is
+    // safe (never the main thread) and makes the whole sequence atomic per run.
     runCatching {
-      client.addGeofences(request, geofencePendingIntent())
-        .addOnSuccessListener {
-          synchronized(registry) {
-            registeredIds.clear()
-            registeredIds.addAll(selectedIds)
-          }
-          GeofenceStore(context).saveRegistered(selectedIds)
-          lastRegLat = lat
-          lastRegLng = lng
-        }
-        .addOnFailureListener { e ->
-          GeoPulseController.emit(
-            "onError",
-            mapOf(
-              "code" to "GEOFENCE_ERROR",
-              "message" to (e.message ?: "Failed to register geofences"),
-            ),
-          )
-        }
+      if (stale.isNotEmpty()) Tasks.await(client.removeGeofences(stale.toList()))
+      Tasks.await(client.addGeofences(request, geofencePendingIntent()))
+      synchronized(registry) {
+        registeredIds.clear()
+        registeredIds.addAll(selectedIds)
+      }
+      GeofenceStore(context).saveRegistered(selectedIds)
+      lastRegLat = lat
+      lastRegLng = lng
+    }.onFailure { e ->
+      GeoPulseController.emit(
+        "onError",
+        mapOf(
+          "code" to "GEOFENCE_ERROR",
+          "message" to (e.message ?: "Failed to register geofences"),
+        ),
+      )
     }
   }
 
@@ -173,6 +176,9 @@ class GeofenceManager(private val context: Context) {
 
     fun specFor(identifier: String): GeofenceSpec? =
       synchronized(registry) { registry[identifier] }
+
+    /** Whether any geofence is registered (in memory). Cheap; no I/O. */
+    fun hasAny(): Boolean = synchronized(registry) { registry.isNotEmpty() }
 
     /**
      * Restores the persisted registry + registered-id set into a fresh process
