@@ -11,6 +11,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 from typing import Any
 
@@ -131,7 +132,12 @@ async def ingest_locations(request: Request, background_tasks: BackgroundTasks) 
     script / single-event posters send). The device id falls back to a header or
     "default".
     """
-    body = await request.json()
+    # Read the raw body so we can transparently decode gzip (the SDK gzips
+    # batches above ~256 bytes to save data/battery).
+    raw = await request.body()
+    if "gzip" in request.headers.get("content-encoding", "").lower():
+        raw = gzip.decompress(raw)
+    body = json.loads(raw or b"null")
     device = request.headers.get("x-device-id", "default")
 
     locations: list[dict[str, Any]] = []

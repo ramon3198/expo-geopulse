@@ -145,16 +145,17 @@ export interface GeoPulseConfig {
   httpMethod?: 'POST' | 'PUT';
   headers?: Record<string, string>;
   /**
-   * Extra key/values to merge into each sync request body.
-   * @remarks Reserved — not yet implemented; the request body is the locations array.
+   * Extra key/values merged into the root of each sync request body. When set,
+   * the body becomes `{ "locations": [...], ...params }` instead of a bare array
+   * — useful for attaching an auth token, device metadata, etc.
    */
   params?: Record<string, unknown>;
   autoSync?: boolean;
   /** Upload once this many records are queued (0 = upload each location). */
   autoSyncThreshold?: number;
   /**
-   * Send queued locations as one batched array vs. one request per location.
-   * @remarks Reserved — not yet implemented; sync always batches by `maxBatchSize`.
+   * When `true`, upload the entire queued backlog in a single request; when
+   * `false` (default) upload in chunks of `maxBatchSize`.
    */
   batchSync?: boolean;
   maxBatchSize?: number;

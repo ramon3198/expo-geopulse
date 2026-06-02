@@ -694,14 +694,17 @@ object GeoPulseController {
       // Serialize with the WorkManager sync path so the same rows can't be
       // claimed and uploaded twice.
       synchronized(LocationStore.syncLock) {
-        val batch = runCatching {
-          locationStore.getAll(if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250)
-        }.getOrDefault(emptyList())
+        val limit = if (cfg.batchSync) {
+          cfg.maxRecordsToPersist.coerceAtLeast(1)
+        } else {
+          if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
+        }
+        val batch = runCatching { locationStore.getAll(limit) }.getOrDefault(emptyList())
         if (batch.isEmpty()) {
           onResult(emptyList())
           return@execute
         }
-        val body = "[" + batch.joinToString(",") { it.json } + "]"
+        val body = HttpUploader.buildBody(batch.map { it.json }, cfg.params)
         val result = HttpUploader.upload(url, cfg.httpMethod, cfg.headers, body)
         if (result.success) {
           runCatching { locationStore.deleteByIds(batch.map { it.id }) }

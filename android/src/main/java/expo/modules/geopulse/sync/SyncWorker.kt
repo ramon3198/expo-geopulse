@@ -33,7 +33,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     val url = config.url ?: return Result.success()
 
     val store = LocationStore.getInstance(applicationContext)
-    val batchSize = if (config.maxBatchSize > 0) config.maxBatchSize else 250
+    // batchSync=true uploads the whole backlog in one request; otherwise chunk by
+    // maxBatchSize (the default).
+    val batchSize = if (config.batchSync) {
+      config.maxRecordsToPersist.coerceAtLeast(1)
+    } else {
+      if (config.maxBatchSize > 0) config.maxBatchSize else 250
+    }
 
     // Serialize the whole drain with the manual sync() path so they can't claim
     // and upload the same rows twice.
@@ -44,7 +50,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
         val batch = store.getAll(batchSize)
         if (batch.isEmpty()) return Result.success()
 
-        val body = "[" + batch.joinToString(",") { it.json } + "]"
+        val body = HttpUploader.buildBody(batch.map { it.json }, config.params)
         val result = HttpUploader.upload(url, config.httpMethod, config.headers, body)
         if (!result.success) {
           return if (isTransient(result.status)) {
