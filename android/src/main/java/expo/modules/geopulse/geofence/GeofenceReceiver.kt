@@ -23,8 +23,10 @@ class GeofenceReceiver : BroadcastReceiver() {
     val location = event.triggeringLocation
 
     // The OS keeps firing geofences across process death; restore the persisted
-    // specs so a fresh process can still refine/forward the transition.
+    // specs (and the controller's context + config) so a fresh process can still
+    // refine the transition AND dispatch a headless event for it.
     GeofenceManager.ensureRestored(context)
+    GeoPulseController.ensureInitialized(context)
 
     for (geofence in triggering) {
       val spec = GeofenceManager.specFor(geofence.requestId) ?: continue

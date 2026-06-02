@@ -60,6 +60,11 @@ class LocationService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    // On a cold START_STICKY restart the controller singleton is fresh (no JS
+    // runtime), so restore the persisted context + config before using it — both
+    // for the notification/tracking config and so headless dispatch has `url` /
+    // `enableHeadless`.
+    GeoPulseController.ensureInitialized(applicationContext)
     startForegroundWithNotification()
     startTracking()
     // START_STICKY: the OS restarts the service if it is killed while tracking.

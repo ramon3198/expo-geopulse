@@ -161,6 +161,23 @@ object GeoPulseController {
     if (config.startOnBoot) start()
   }
 
+  /**
+   * Ensure the controller has an app context and config in a process that may
+   * have started cold — woken by a receiver/worker/START_STICKY service with no
+   * JS runtime ever attached. Without this, `emit()` would see a default config
+   * (`enableHeadless=false`) and a null `appContext`, dropping the event in
+   * exactly the "app killed" case headless exists for. No-op once initialized
+   * (warm process, or boot already restored).
+   */
+  fun ensureInitialized(context: Context) {
+    if (appContext != null) return
+    appContext = context.applicationContext
+    runCatching { ConfigStore(context).loadConfig() }.getOrNull()?.let {
+      config = GeoPulseConfig.fromMap(it)
+      rebuildFusion()
+    }
+  }
+
   fun start() {
     enabled = true
     // Fresh start at the configured accuracy: undo any prior battery auto-degrade

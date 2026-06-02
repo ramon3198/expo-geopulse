@@ -10,6 +10,12 @@
   Previously only the native data pipeline was headless-safe; now custom JS can
   run too. Register the task at your app's entry point, outside any component.
   (Requires on-device verification — the killed-app path can't be exercised in CI.)
+  - The headless service holds the wakelock only after the start is accepted, so
+    a blocked start can't leak it forever.
+  - `GeoPulseController.ensureInitialized(context)` restores the persisted config
+    (and app context) in a cold process woken by a receiver/worker/sticky service,
+    so headless events aren't lost in exactly the "app killed" case — wired into
+    `GeofenceReceiver` and the service's `onStartCommand`.
 
 ## 0.3.0
 

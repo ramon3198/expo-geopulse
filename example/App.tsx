@@ -80,6 +80,7 @@ export default function App() {
       enableKalman: true,
       enableTripDetection: true,
       enableDrivingEvents: true,
+      enableHeadless: true,
       url: `${API}/locations`,
       autoSync: true,
       autoSyncThreshold: 5,

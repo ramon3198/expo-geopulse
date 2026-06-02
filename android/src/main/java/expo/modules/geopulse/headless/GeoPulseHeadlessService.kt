@@ -45,9 +45,14 @@ class GeoPulseHeadlessService : HeadlessJsTaskService() {
         putExtra(EXTRA_EVENT, event)
         putExtra(EXTRA_PAYLOAD, payloadJson)
       }
-      runCatching {
-        acquireWakeLockNow(ctx)
-        ctx.startService(intent)
+      // Start the service FIRST, and only then hold the wakelock — and only if the
+      // start was accepted. Acquiring before startService would leak the wakelock
+      // forever if the start is blocked (a background-start restriction), because
+      // the service would never run onDestroy() to release it. The acquire is the
+      // next synchronous line, so it still happens before onStartCommand runs.
+      val started = runCatching { ctx.startService(intent) != null }.getOrDefault(false)
+      if (started) {
+        runCatching { acquireWakeLockNow(ctx) }
       }
     }
   }
