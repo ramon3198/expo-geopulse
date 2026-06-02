@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+A broad reliability/hardening release: a multi-subsystem audit plus the fixes
+that built up since 0.2.1 (the 0.2.2 work was never published separately and is
+included here).
 
 ### Hardening pass (multi-subsystem audit)
 
