@@ -53,15 +53,22 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         data = json.dumps(message)
+        # Snapshot the clients under the lock, then send OUTSIDE it and in
+        # parallel: holding the lock across `await send_text` lets one slow client
+        # stall ingestion (/locations awaits this) and connect/disconnect.
         async with self._lock:
-            dead = []
-            for ws in self._clients:
-                try:
-                    await ws.send_text(data)
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                self._clients.discard(ws)
+            clients = list(self._clients)
+        if not clients:
+            return
+        results = await asyncio.gather(
+            *(ws.send_text(data) for ws in clients),
+            return_exceptions=True,
+        )
+        dead = [ws for ws, r in zip(clients, results) if isinstance(r, Exception)]
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    self._clients.discard(ws)
 
 
 manager = ConnectionManager()
@@ -133,8 +140,11 @@ async def ingest_locations(request: Request) -> JSONResponse:
         elif "coords" in body:
             locations = [body]
 
+    # Persist everything first (durable, fast), then broadcast (best-effort), so a
+    # slow dashboard client can't delay or drop the ingestion of a batch.
     for loc in locations:
         db.insert_location(device, loc)
+    for loc in locations:
         await manager.broadcast({"type": "location", "device": device, "location": loc})
 
     return JSONResponse({"received": len(locations)})
