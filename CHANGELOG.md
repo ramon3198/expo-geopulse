@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0
+
+### Performance
+
+- **Sync uploads are gzip-compressed** (`Content-Encoding: gzip`) above ~256 bytes,
+  cutting upload size ~80–90% for batched locations — less data and battery. The
+  companion server transparently decodes it.
+
+### New features
+
+- **`params` implemented.** Custom key/values are merged into the root of each
+  sync request body (`{ "locations": [...], ...params }`) — e.g. an auth/device
+  token. No longer a reserved no-op.
+- **`batchSync` implemented.** `true` uploads the whole queued backlog in one
+  request; `false` (default) keeps chunking by `maxBatchSize`.
+
+### Internal / quality
+
+- Extracted pure geo math into `GeoMath` (no Android deps) with a JVM unit-test
+  suite, and added a **Kotlin CI job** that runs those tests + **ktlint**, so the
+  kind of logic regressions found in review are caught automatically.
+
 ## 0.4.0
 
 ### New features
