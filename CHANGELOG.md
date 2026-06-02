@@ -41,7 +41,9 @@
   64-bit values). The motion and driving detectors now also fully reset on
   `stop()` and guard against a sensor callback that fires after stop.
 - `launchService()` (config re-apply / battery degrade) is wrapped so a
-  background `ForegroundServiceStartNotAllowedException` can't crash the worker.
+  background `ForegroundServiceStartNotAllowedException` can't crash the worker —
+  and now emits `onError(SERVICE_START_FAILED)` on failure instead of leaving the
+  state "active" with no service running.
 
 ### Trip accuracy
 

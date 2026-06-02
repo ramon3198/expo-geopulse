@@ -197,6 +197,19 @@ object GeoPulseController {
       } else {
         ctx.startService(intent)
       }
+    }.onFailure { e ->
+      // The service couldn't be (re)started — most likely a background-start
+      // restriction on Android 12+. Surface it instead of failing silently, so a
+      // consumer that called start()/setConfig() isn't left thinking tracking is
+      // active when no fixes will arrive.
+      emit(
+        "onError",
+        mapOf(
+          "code" to "SERVICE_START_FAILED",
+          "message" to (e.message
+            ?: "Could not start the tracking service (it may be blocked from the background)."),
+        ),
+      )
     }
   }
 
