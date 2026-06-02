@@ -44,7 +44,10 @@
   background `ForegroundServiceStartNotAllowedException` can't crash the worker —
   and now emits `onError(SERVICE_START_FAILED)` on failure. `start()` also flips
   `enabled` back to `false` when the launch is rejected, so the reported state is
-  honest even at boot (where there's no JS dispatcher to receive the error).
+  honest even at boot (where there's no JS dispatcher to receive the error). And
+  when the service stops *itself* (e.g. it finds location permission was revoked),
+  it now tells the controller, so `getState()` no longer reports tracking active
+  with no service running.
 
 ### Trip accuracy
 

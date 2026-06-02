@@ -199,6 +199,9 @@ class LocationService : Service() {
   }
 
   private fun stopTrackingAndSelf() {
+    // Tell the controller tracking ended so getState()/enabled don't keep
+    // reporting active after the service stops itself (e.g. permission revoked).
+    GeoPulseController.markStoppedByService()
     teardown()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
       stopForeground(STOP_FOREGROUND_REMOVE)

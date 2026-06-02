@@ -224,11 +224,21 @@ object GeoPulseController {
   }
 
   fun stop() {
+    markStoppedByService()
+    val ctx = appContext ?: return
+    ctx.stopService(Intent(ctx, LocationService::class.java))
+  }
+
+  /**
+   * Resets tracking state without issuing stopService. Called by [stop] and by
+   * the service itself when it stops on its own (e.g. it found location permission
+   * was revoked), so `getState()` never reports tracking active with no service
+   * actually running.
+   */
+  fun markStoppedByService() {
     enabled = false
     synchronized(fusionLock) { fusion?.reset() }
     tripManager?.reset()
-    val ctx = appContext ?: return
-    ctx.stopService(Intent(ctx, LocationService::class.java))
   }
 
   // ---- location pipeline ----
