@@ -11,12 +11,9 @@ import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.Tasks
 import expo.modules.geopulse.core.GeoPulseController
+import expo.modules.geopulse.util.GeoMath
 import java.util.concurrent.Executors
-import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Geofencing with two advantages over typical wrappers:
@@ -164,7 +161,6 @@ class GeofenceManager(private val context: Context) {
   companion object {
     private const val MAX_ACTIVE = 100
     private const val RECONCILE_DISTANCE_M = 500.0
-    private const val EARTH_RADIUS_M = 6371000.0
 
     private val registry = LinkedHashMap<String, GeofenceSpec>()
     // Ids currently registered with Play Services (guarded by `registry`).
@@ -202,30 +198,12 @@ class GeofenceManager(private val context: Context) {
       }
     }
 
-    fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-      val dLat = Math.toRadians(lat2 - lat1)
-      val dLon = Math.toRadians(lon2 - lon1)
-      val a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2) * sin(dLon / 2)
-      return EARTH_RADIUS_M * 2 * atan2(sqrt(a), sqrt(1 - a))
-    }
+    fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double =
+      GeoMath.haversineMeters(lat1, lon1, lat2, lon2)
 
     /** Ray-casting point-in-polygon test. Vertices are [lat, lng] pairs. */
-    fun pointInPolygon(lat: Double, lng: Double, vertices: List<DoubleArray>): Boolean {
-      var inside = false
-      var j = vertices.size - 1
-      for (i in vertices.indices) {
-        val yi = vertices[i][0]
-        val xi = vertices[i][1]
-        val yj = vertices[j][0]
-        val xj = vertices[j][1]
-        val intersect = (yi > lat) != (yj > lat) &&
-          lng < (xj - xi) * (lat - yi) / (yj - yi) + xi
-        if (intersect) inside = !inside
-        j = i
-      }
-      return inside
-    }
+    fun pointInPolygon(lat: Double, lng: Double, vertices: List<DoubleArray>): Boolean =
+      GeoMath.pointInPolygon(lat, lng, vertices)
 
     fun specFromMap(map: Map<String, Any?>): GeofenceSpec {
       val vertices = (map["vertices"] as? List<*>)?.mapNotNull { entry ->
