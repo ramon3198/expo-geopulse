@@ -270,11 +270,32 @@ cd server && python simulate.py        # watch the map move
 
 ---
 
+## Headless JS task
+
+Set `enableHeadless: true` and register a task at your app's entry point (top of
+`index.js`, **outside any component**) to run JS for events even while the app is
+killed — the foreground service keeps tracking and spawns a short-lived JS
+context per event:
+
+```ts
+// index.js
+import GeoPulse from 'expo-geopulse';
+
+GeoPulse.registerHeadlessTask(async ({ event, data }) => {
+  if (event === 'onLocation') {
+    await fetch('https://api.example.com/loc', { method: 'POST', body: JSON.stringify(data) });
+  }
+});
+```
+
+Without it, the *data pipeline* (buffer + HTTP sync via the foreground service)
+is still headless-safe on its own — locations are recorded and uploaded to your
+`url` even when the app is killed; only custom JS callbacks need the headless task.
+
 ## Limitations
 
 - **Android only** (for now).
 - Requires a **development build** — not Expo Go.
-- A full **headless JS task** (running JS callbacks while the app is killed) is not yet implemented; the *data pipeline* (buffer + HTTP sync) is already headless-safe.
 
 ## License
 

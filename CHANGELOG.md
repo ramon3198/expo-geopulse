@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- **Headless JS task.** `GeoPulse.registerHeadlessTask(handler)` plus
+  `enableHeadless: true` runs a registered JS task for events while the app is
+  killed (a `GeoPulseHeadlessService` spawns a short-lived RN context per event).
+  Previously only the native data pipeline was headless-safe; now custom JS can
+  run too. Register the task at your app's entry point, outside any component.
+  (Requires on-device verification — the killed-app path can't be exercised in CI.)
+
 ## 0.3.0
 
 A broad reliability/hardening release: a multi-subsystem audit plus the fixes

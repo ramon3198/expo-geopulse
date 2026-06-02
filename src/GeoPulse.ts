@@ -1,4 +1,5 @@
 import type { EventSubscription } from 'expo-modules-core';
+import { AppRegistry } from 'react-native';
 
 import NativeModule from './ExpoGeopulseModule';
 import type {
@@ -14,11 +15,15 @@ import type {
   ProviderChangeEvent,
   HeartbeatEvent,
   GeoPulseError,
+  HeadlessEvent,
   VisitEvent,
   TripEvent,
   Trip,
   DrivingEvent,
 } from './ExpoGeopulse.types';
+
+/** Must match `GeoPulseHeadlessService.TASK_KEY` on the native side. */
+const HEADLESS_TASK_KEY = 'ExpoGeopulseHeadless';
 import {
   MODE_TO_ACCURACY,
   type EventName,
@@ -221,6 +226,41 @@ class GeoPulse {
 
   onError(listener: (error: GeoPulseError) => void): EventSubscription {
     return NativeModule.addListener('onError', listener);
+  }
+
+  /**
+   * Register a task that runs for SDK events **while the app is killed** (the
+   * foreground service keeps tracking even with no JS runtime alive). Requires
+   * `enableHeadless: true` in your config.
+   *
+   * **Call this once at your app's entry point — at the top level of `index.js`,
+   * outside any React component** — so it's registered when the JS bundle loads.
+   * When the OS spawns the headless JS context, only this task runs (your app
+   * UI does not mount).
+   *
+   * ```ts
+   * // index.js
+   * import GeoPulse from 'expo-geopulse';
+   * GeoPulse.registerHeadlessTask(async ({ event, data }) => {
+   *   if (event === 'onLocation') await fetch('https://api.me/loc', {
+   *     method: 'POST', body: JSON.stringify(data),
+   *   });
+   * });
+   * ```
+   */
+  registerHeadlessTask(task: (event: HeadlessEvent) => Promise<void>): void {
+    AppRegistry.registerHeadlessTask(
+      HEADLESS_TASK_KEY,
+      () => async (raw: { event: string; payload: string }) => {
+        let data: unknown = {};
+        try {
+          data = JSON.parse(raw?.payload ?? '{}');
+        } catch {
+          /* keep {} */
+        }
+        await task({ event: raw?.event, data });
+      }
+    );
   }
 
   /** Fires on visit arrival/departure (stay-points). Requires `enableTripDetection`. */

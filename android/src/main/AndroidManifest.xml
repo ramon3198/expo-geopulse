@@ -25,6 +25,13 @@
       android:exported="false"
       android:foregroundServiceType="location" />
 
+    <!-- Runs the app's registered JS headless task for events while the app is
+         killed (opt-in via config.enableHeadless). -->
+    <service
+      android:name="expo.modules.geopulse.headless.GeoPulseHeadlessService"
+      android:enabled="true"
+      android:exported="false" />
+
     <receiver
       android:name="expo.modules.geopulse.boot.BootReceiver"
       android:enabled="true"

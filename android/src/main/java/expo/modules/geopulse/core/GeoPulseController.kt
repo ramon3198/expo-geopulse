@@ -13,6 +13,7 @@ import androidx.work.WorkManager
 import expo.modules.geopulse.db.LocationStore
 import expo.modules.geopulse.fusion.KalmanBridge
 import expo.modules.geopulse.geofence.GeofenceManager
+import expo.modules.geopulse.headless.GeoPulseHeadlessService
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.service.LocationService
 import expo.modules.geopulse.trip.TripVisitManager
@@ -699,7 +700,21 @@ object GeoPulseController {
 
   /** Forward an event to JS if a runtime is currently attached. */
   fun emit(event: String, payload: Map<String, Any?>) {
-    dispatcher?.dispatch(event, payload)
+    val d = dispatcher
+    if (d != null) {
+      d.dispatch(event, payload)
+      return
+    }
+    // No JS runtime attached (app killed/swiped away while the foreground service
+    // keeps tracking). If headless is enabled, run the registered JS task in a
+    // short-lived RN context instead of dropping the event.
+    if (config.enableHeadless) {
+      appContext?.let { ctx ->
+        runCatching {
+          GeoPulseHeadlessService.dispatch(ctx, event, Json.toJson(payload))
+        }
+      }
+    }
   }
 
   // ---- state ----

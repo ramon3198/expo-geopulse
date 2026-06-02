@@ -130,6 +130,13 @@ export interface GeoPulseConfig {
   accuracyFilter?: number;
 
   // --- lifecycle ---
+  /**
+   * Run a registered JS task for events while the app is killed (the foreground
+   * service keeps tracking). Register the task with
+   * {@link GeoPulse.registerHeadlessTask} at your app's entry point. When `false`
+   * the data pipeline is still headless-safe (fixes are buffered and synced
+   * natively); only the JS callbacks require this.
+   */
   enableHeadless?: boolean;
   startOnBoot?: boolean;
 
@@ -377,3 +384,18 @@ export type GeoPulseEvents = {
   onTrip: (event: TripEvent) => void;
   onDrivingEvent: (event: DrivingEvent) => void;
 };
+
+/**
+ * Payload delivered to a {@link GeoPulse.registerHeadlessTask} handler when an
+ * event fires while the app is killed.
+ */
+export interface HeadlessEvent {
+  /** Native event name, e.g. `'onLocation'`, `'onGeofence'`, `'onError'`, `'onTrip'`. */
+  event: keyof GeoPulseEvents | string;
+  /**
+   * The event's payload — the same object the matching `on(...)` callback would
+   * receive (a `Location` for `'onLocation'`, a `GeofenceEvent` for `'onGeofence'`,
+   * etc.). Narrow it by `event`.
+   */
+  data: unknown;
+}

@@ -33,6 +33,10 @@ android {
 }
 
 dependencies {
+  // React Native core (for the JS headless task service). Provided by the host
+  // app at runtime; version is managed by the React Native Gradle plugin, so no
+  // version is pinned here (mirrors how expo-modules-core references it).
+  compileOnly "com.facebook.react:react-android"
   // Fused location, geofencing, activity recognition (Google Play Services).
   implementation "com.google.android.gms:play-services-location:21.3.0"
   // ContextCompat / NotificationCompat. Gradle resolves to the highest version on the classpath.
