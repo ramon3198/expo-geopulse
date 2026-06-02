@@ -19,13 +19,12 @@ import kotlin.math.sqrt
  */
 class DrivingEventsManager(
   private val context: Context,
-  private var harshAccelThreshold: Double,  // m/s^2
-  private var harshBrakeThreshold: Double,  // m/s^2 (magnitude; brake = deceleration)
-  private var speedLimitMps: Double,        // m/s; 0 disables speeding
-  private var idleTimeoutMs: Long,          // continuous near-zero speed to call idling
+  private var harshAccelThreshold: Double, // m/s^2
+  private var harshBrakeThreshold: Double, // m/s^2 (magnitude; brake = deceleration)
+  private var speedLimitMps: Double, // m/s; 0 disables speeding
+  private var idleTimeoutMs: Long, // continuous near-zero speed to call idling
   private var minSpeedMps: Double,          // min GPS speed before accel events count (0 = always)
 ) : SensorEventListener {
-
   interface Listener {
     /** type: harsh_braking | harsh_acceleration | speeding | idling */
     fun onDrivingEvent(
@@ -53,7 +52,13 @@ class DrivingEventsManager(
   // Guards a sensor event already queued when stop() ran from firing afterwards.
   @Volatile private var stopped = false
 
-  fun setParams(accel: Double, brake: Double, speedLimit: Double, idleTimeout: Long, minSpeed: Double) {
+  fun setParams(
+    accel: Double,
+    brake: Double,
+    speedLimit: Double,
+    idleTimeout: Long,
+    minSpeed: Double,
+  ) {
     harshAccelThreshold = accel
     harshBrakeThreshold = brake
     speedLimitMps = speedLimit
@@ -96,13 +101,14 @@ class DrivingEventsManager(
     val x = event.values[0]
     val y = event.values[1]
     val z = event.values[2]
-    val magnitude = if (usingRawAccelerometer) {
-      // Subtract gravity: |a| deviation from 9.81 captures real acceleration spikes.
-      kotlin.math.abs(sqrt((x * x + y * y + z * z).toDouble()) - SensorManager.GRAVITY_EARTH)
-    } else {
-      // Linear acceleration already excludes gravity; use horizontal magnitude.
-      sqrt((x * x + y * y).toDouble())
-    }
+    val magnitude =
+      if (usingRawAccelerometer) {
+        // Subtract gravity: |a| deviation from 9.81 captures real acceleration spikes.
+        kotlin.math.abs(sqrt((x * x + y * y + z * z).toDouble()) - SensorManager.GRAVITY_EARTH)
+      } else {
+        // Linear acceleration already excludes gravity; use horizontal magnitude.
+        sqrt((x * x + y * y).toDouble())
+      }
 
     val now = SystemClock.elapsedRealtime()
     if (now - lastEventElapsed < DEBOUNCE_MS) return
@@ -121,7 +127,10 @@ class DrivingEventsManager(
     }
   }
 
-  override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+  override fun onAccuracyChanged(
+    sensor: Sensor?,
+    accuracy: Int,
+  ) {}
 
   @Volatile private var decelerating = false
 
@@ -157,12 +166,20 @@ class DrivingEventsManager(
     }
   }
 
-  private fun fire(type: String, magnitude: Double, threshold: Double, now: Long) {
+  private fun fire(
+    type: String,
+    magnitude: Double,
+    threshold: Double,
+    now: Long,
+  ) {
     lastEventElapsed = now
     listener?.onDrivingEvent(type, severityFor(magnitude, threshold), magnitude, lastSpeedMps)
   }
 
-  private fun severityFor(value: Double, threshold: Double): String {
+  private fun severityFor(
+    value: Double,
+    threshold: Double,
+  ): String {
     if (threshold <= 0.0) return "warning"
     val ratio = value / threshold
     return when {

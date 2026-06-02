@@ -17,10 +17,11 @@ object PermissionsManager {
 
   /** Foreground permissions to request together. Background location is requested separately. */
   fun requestList(): Array<String> {
-    val list = mutableListOf(
-      Manifest.permission.ACCESS_FINE_LOCATION,
-      Manifest.permission.ACCESS_COARSE_LOCATION,
-    )
+    val list =
+      mutableListOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+      )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       list.add(Manifest.permission.POST_NOTIFICATIONS)
     }
@@ -30,8 +31,10 @@ object PermissionsManager {
     return list.toTypedArray()
   }
 
-  private fun granted(ctx: Context, perm: String): Boolean =
-    ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED
+  private fun granted(
+    ctx: Context,
+    perm: String,
+  ): Boolean = ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED
 
   fun hasLocationPermission(ctx: Context): Boolean =
     granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ||
@@ -46,10 +49,11 @@ object PermissionsManager {
 
   /** Opens this app's system settings page (for manual "Allow all the time"). */
   fun openAppSettings(ctx: Context) {
-    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-      data = Uri.fromParts("package", ctx.packageName, null)
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
+    val intent =
+      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", ctx.packageName, null)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
     runCatching { ctx.startActivity(intent) }
   }
 
@@ -69,10 +73,11 @@ object PermissionsManager {
   /** Opens the system dialog asking the user to exempt the app from Doze. */
   fun requestIgnoreBatteryOptimizations(ctx: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-      data = Uri.parse("package:${ctx.packageName}")
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
+    val intent =
+      Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:${ctx.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
     runCatching { ctx.startActivity(intent) }
   }
 
@@ -80,27 +85,31 @@ object PermissionsManager {
   fun statusMap(ctx: Context): Map<String, Any?> {
     val fine = granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
     val coarse = granted(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
-    val background = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-    } else {
-      fine || coarse
-    }
-    val notifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      granted(ctx, Manifest.permission.POST_NOTIFICATIONS)
-    } else {
-      true
-    }
-    val activity = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      granted(ctx, ACTIVITY_RECOGNITION)
-    } else {
-      true
-    }
+    val background =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+      } else {
+        fine || coarse
+      }
+    val notifications =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        granted(ctx, Manifest.permission.POST_NOTIFICATIONS)
+      } else {
+        true
+      }
+    val activity =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        granted(ctx, ACTIVITY_RECOGNITION)
+      } else {
+        true
+      }
     // 0 NotDetermined, 1 Denied, 2 WhenInUse, 3 Always
-    val status = when {
-      background && (fine || coarse) -> 3
-      fine || coarse -> 2
-      else -> 1
-    }
+    val status =
+      when {
+        background && (fine || coarse) -> 3
+        fine || coarse -> 2
+        else -> 1
+      }
     return mapOf(
       "fine" to fine,
       "coarse" to coarse,

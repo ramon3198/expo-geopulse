@@ -12,10 +12,13 @@ import android.database.sqlite.SQLiteOpenHelper
  * Each row stores the location's JSON exactly as it is emitted to JS, so batch
  * upload is a trivial string join and no re-serialization is needed.
  */
-class LocationStore private constructor(context: Context) :
-  SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
-
-  data class Record(val id: Long, val json: String)
+class LocationStore private constructor(
+  context: Context,
+) : SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
+  data class Record(
+    val id: Long,
+    val json: String,
+  )
 
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL(
@@ -28,7 +31,11 @@ class LocationStore private constructor(context: Context) :
     db.execSQL("CREATE INDEX idx_${TABLE}_id ON $TABLE(id)")
   }
 
-  override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+  override fun onUpgrade(
+    db: SQLiteDatabase,
+    oldVersion: Int,
+    newVersion: Int,
+  ) {
     db.execSQL("DROP TABLE IF EXISTS $TABLE")
     onCreate(db)
   }
@@ -36,13 +43,19 @@ class LocationStore private constructor(context: Context) :
   private var insertsSinceTrim = 0
 
   @Synchronized
-  fun insert(uuid: String, timestamp: Long, json: String, maxRecords: Int) {
+  fun insert(
+    uuid: String,
+    timestamp: Long,
+    json: String,
+    maxRecords: Int,
+  ) {
     val db = writableDatabase
-    val values = ContentValues().apply {
-      put("uuid", uuid)
-      put("timestamp", timestamp)
-      put("json", json)
-    }
+    val values =
+      ContentValues().apply {
+        put("uuid", uuid)
+        put("timestamp", timestamp)
+        put("json", json)
+      }
     db.insert(TABLE, null, values)
 
     // Trimming on every insert is wasteful. Only run the DELETE periodically
@@ -63,10 +76,11 @@ class LocationStore private constructor(context: Context) :
    */
   @Synchronized
   fun getAll(limit: Int): List<Record> {
-    val sql = buildString {
-      append("SELECT id, json FROM $TABLE ORDER BY id ASC")
-      if (limit > 0) append(" LIMIT $limit")
-    }
+    val sql =
+      buildString {
+        append("SELECT id, json FROM $TABLE ORDER BY id ASC")
+        if (limit > 0) append(" LIMIT $limit")
+      }
     val records = mutableListOf<Record>()
     readableDatabase.rawQuery(sql, null).use { cursor ->
       while (cursor.moveToNext()) {
@@ -83,10 +97,11 @@ class LocationStore private constructor(context: Context) :
    */
   @Synchronized
   fun getLatest(limit: Int): List<Record> {
-    val sql = buildString {
-      append("SELECT id, json FROM $TABLE ORDER BY id DESC")
-      if (limit > 0) append(" LIMIT $limit")
-    }
+    val sql =
+      buildString {
+        append("SELECT id, json FROM $TABLE ORDER BY id DESC")
+        if (limit > 0) append(" LIMIT $limit")
+      }
     val records = mutableListOf<Record>()
     readableDatabase.rawQuery(sql, null).use { cursor ->
       while (cursor.moveToNext()) {

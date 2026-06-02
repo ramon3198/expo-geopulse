@@ -22,8 +22,11 @@ class TripVisitManager(
 ) {
   interface Listener {
     fun onVisitArrive(visit: Visit)
+
     fun onVisitDepart(visit: Visit)
+
     fun onTripStart(trip: Trip)
+
     fun onTripEnd(trip: Trip)
   }
 
@@ -34,14 +37,15 @@ class TripVisitManager(
     val arrivalTime: Long,
     var departureTime: Long?,
   ) {
-    fun toMap(): Map<String, Any?> = mapOf(
-      "uuid" to uuid,
-      "latitude" to latitude,
-      "longitude" to longitude,
-      "arrivalTime" to arrivalTime,
-      "departureTime" to departureTime,
-      "dwellMs" to (departureTime?.minus(arrivalTime)),
-    )
+    fun toMap(): Map<String, Any?> =
+      mapOf(
+        "uuid" to uuid,
+        "latitude" to latitude,
+        "longitude" to longitude,
+        "arrivalTime" to arrivalTime,
+        "departureTime" to departureTime,
+        "dwellMs" to (departureTime?.minus(arrivalTime)),
+      )
   }
 
   data class Trip(
@@ -55,18 +59,19 @@ class TripVisitManager(
     var distanceMeters: Double,
     var pointCount: Int,
   ) {
-    fun toMap(): Map<String, Any?> = mapOf(
-      "uuid" to uuid,
-      "startTime" to startTime,
-      "endTime" to endTime,
-      "startLatitude" to startLat,
-      "startLongitude" to startLng,
-      "endLatitude" to endLat,
-      "endLongitude" to endLng,
-      "distanceMeters" to distanceMeters,
-      "pointCount" to pointCount,
-      "durationMs" to (endTime?.minus(startTime)),
-    )
+    fun toMap(): Map<String, Any?> =
+      mapOf(
+        "uuid" to uuid,
+        "startTime" to startTime,
+        "endTime" to endTime,
+        "startLatitude" to startLat,
+        "startLongitude" to startLng,
+        "endLatitude" to endLat,
+        "endLongitude" to endLng,
+        "distanceMeters" to distanceMeters,
+        "pointCount" to pointCount,
+        "durationMs" to (endTime?.minus(startTime)),
+      )
   }
 
   var listener: Listener? = null
@@ -88,7 +93,10 @@ class TripVisitManager(
   private var lastLng = 0.0
   private var hasLast = false
 
-  fun setParams(radiusMeters: Double, minDwellMs: Long) {
+  fun setParams(
+    radiusMeters: Double,
+    minDwellMs: Long,
+  ) {
     visitRadiusMeters = radiusMeters
     minVisitDwellMs = minDwellMs
   }
@@ -101,7 +109,11 @@ class TripVisitManager(
   }
 
   /** Feed one fix. Coordinates should be post-fusion. */
-  fun onLocation(latitude: Double, longitude: Double, timeMs: Long) {
+  fun onLocation(
+    latitude: Double,
+    longitude: Double,
+    timeMs: Long,
+  ) {
     // Accumulate trip distance from the previous point.
     if (hasLast) {
       currentTrip?.let { trip ->
@@ -152,7 +164,11 @@ class TripVisitManager(
     }
   }
 
-  private fun seedCluster(lat: Double, lng: Double, time: Long) {
+  private fun seedCluster(
+    lat: Double,
+    lng: Double,
+    time: Long,
+  ) {
     clusterLat = lat
     clusterLng = lng
     clusterCount = 1
@@ -164,13 +180,14 @@ class TripVisitManager(
   }
 
   private fun confirmVisit(timeMs: Long) {
-    val visit = Visit(
-      uuid = UUID.randomUUID().toString(),
-      latitude = clusterLat,
-      longitude = clusterLng,
-      arrivalTime = clusterFirstTime,
-      departureTime = null,
-    )
+    val visit =
+      Visit(
+        uuid = UUID.randomUUID().toString(),
+        latitude = clusterLat,
+        longitude = clusterLng,
+        arrivalTime = clusterFirstTime,
+        departureTime = null,
+      )
     currentVisit = visit
     clusterCount = 0
     // Arriving somewhere ends any in-progress trip. Align the trip's end with the
@@ -189,18 +206,23 @@ class TripVisitManager(
     listener?.onVisitArrive(visit)
   }
 
-  private fun startTrip(lat: Double, lng: Double, time: Long) {
-    val trip = Trip(
-      uuid = UUID.randomUUID().toString(),
-      startTime = time,
-      endTime = null,
-      startLat = lat,
-      startLng = lng,
-      endLat = lat,
-      endLng = lng,
-      distanceMeters = 0.0,
-      pointCount = 1,
-    )
+  private fun startTrip(
+    lat: Double,
+    lng: Double,
+    time: Long,
+  ) {
+    val trip =
+      Trip(
+        uuid = UUID.randomUUID().toString(),
+        startTime = time,
+        endTime = null,
+        startLat = lat,
+        startLng = lng,
+        endLat = lat,
+        endLng = lng,
+        distanceMeters = 0.0,
+        pointCount = 1,
+      )
     currentTrip = trip
     listener?.onTripStart(trip)
   }

@@ -16,9 +16,9 @@ import expo.modules.geopulse.geofence.GeofenceManager
 import expo.modules.geopulse.headless.GeoPulseHeadlessService
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.service.LocationService
-import expo.modules.geopulse.trip.TripVisitManager
 import expo.modules.geopulse.sync.HttpUploader
 import expo.modules.geopulse.sync.SyncWorker
+import expo.modules.geopulse.trip.TripVisitManager
 import expo.modules.geopulse.util.Json
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -42,12 +42,13 @@ object GeoPulseController {
 
   // Tracking fields a named preset controls. Hand-tuning any of these (without
   // also passing `preset`) drops back to manual mode so the change sticks.
-  private val PRESET_TUNING_KEYS = setOf(
-    "desiredAccuracy",
-    "distanceFilter",
-    "locationUpdateInterval",
-    "fastestLocationUpdateInterval",
-  )
+  private val PRESET_TUNING_KEYS =
+    setOf(
+      "desiredAccuracy",
+      "distanceFilter",
+      "locationUpdateInterval",
+      "fastestLocationUpdateInterval",
+    )
 
   private var dispatcher: EventDispatcher? = null
   private var appContext: Context? = null
@@ -87,7 +88,10 @@ object GeoPulseController {
 
   // ---- attachment ----
 
-  fun attach(context: Context, eventDispatcher: EventDispatcher) {
+  fun attach(
+    context: Context,
+    eventDispatcher: EventDispatcher,
+  ) {
     appContext = context.applicationContext
     dispatcher = eventDispatcher
   }
@@ -99,12 +103,13 @@ object GeoPulseController {
   // ---- configuration / lifecycle ----
 
   fun ready(cfg: GeoPulseConfig) {
-    val applied = synchronized(configLock) {
-      val resolved = cfg.resolvePreset()
-      config = resolved
-      clearBatteryDegradeState()
-      resolved
-    }
+    val applied =
+      synchronized(configLock) {
+        val resolved = cfg.resolvePreset()
+        config = resolved
+        clearBatteryDegradeState()
+        resolved
+      }
     rebuildFusion()
     persistConfig(applied)
   }
@@ -119,20 +124,21 @@ object GeoPulseController {
     // `config` reference (the location worker thread reads it concurrently).
     // The whole read-modify-write runs under configLock so it can't interleave
     // with the auto-degrade on the worker thread.
-    val applied = synchronized(configLock) {
-      val base = preDegradeConfig ?: config
-      val merged = base.copy().applyMap(patch)
-      // If the caller hand-tuned a preset-controlled tracking field without also
-      // naming a preset, switch to manual mode so resolvePreset() below doesn't
-      // silently overwrite that change.
-      if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
-        merged.preset = ""
+    val applied =
+      synchronized(configLock) {
+        val base = preDegradeConfig ?: config
+        val merged = base.copy().applyMap(patch)
+        // If the caller hand-tuned a preset-controlled tracking field without also
+        // naming a preset, switch to manual mode so resolvePreset() below doesn't
+        // silently overwrite that change.
+        if (PRESET_TUNING_KEYS.any { patch.containsKey(it) } && !patch.containsKey("preset")) {
+          merged.preset = ""
+        }
+        val resolved = merged.resolvePreset()
+        config = resolved
+        clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
+        resolved
       }
-      val resolved = merged.resolvePreset()
-      config = resolved
-      clearBatteryDegradeState() // an explicit config supersedes any auto-degrade
-      resolved
-    }
     rebuildFusion()
     // Persist the config we just set — never a transient eco that a concurrent
     // battery auto-degrade may have written to the live field after the lock.
@@ -202,11 +208,6 @@ object GeoPulseController {
   }
 
   /**
-   * (Re)starts the foreground service. The service's `onStartCommand` re-applies
-   * the current config — re-issuing the GPS request and reconciling driving
-   * detection — so this doubles as "apply config to the running tracker".
-   */
-  /**
    * (Re)starts the foreground service and reports whether the start was accepted.
    * The service's `onStartCommand` re-applies the current config — re-issuing the
    * GPS request and reconciling driving detection — so this doubles as "apply
@@ -234,8 +235,10 @@ object GeoPulseController {
         "onError",
         mapOf(
           "code" to "SERVICE_START_FAILED",
-          "message" to (e.message
-            ?: "Could not start the tracking service (it may be blocked from the background)."),
+          "message" to (
+            e.message
+              ?: "Could not start the tracking service (it may be blocked from the background)."
+          ),
         ),
       )
     }.isSuccess
@@ -303,16 +306,17 @@ object GeoPulseController {
     }
     lastAndroidLocation = location
 
-    val map = LocationMapper.toMap(
-      location,
-      isMoving,
-      provider = provider,
-      filtered = filtered,
-      overrideLat = lat,
-      overrideLng = lng,
-      overrideAccuracy = accuracy,
-      context = appContext,
-    )
+    val map =
+      LocationMapper.toMap(
+        location,
+        isMoving,
+        provider = provider,
+        filtered = filtered,
+        overrideLat = lat,
+        overrideLng = lng,
+        overrideAccuracy = accuracy,
+        context = appContext,
+      )
     lastLocation = map
     emit("onLocation", map)
 
@@ -335,7 +339,12 @@ object GeoPulseController {
   var drivingSpeedSink: ((Double) -> Unit)? = null
 
   /** Called by the driving-events detector for each detected manoeuvre. */
-  fun notifyDrivingEvent(type: String, severity: String, magnitude: Double, speedMps: Double) {
+  fun notifyDrivingEvent(
+    type: String,
+    severity: String,
+    magnitude: Double,
+    speedMps: Double,
+  ) {
     emit(
       "onDrivingEvent",
       mapOf(
@@ -357,23 +366,24 @@ object GeoPulseController {
       return it
     }
     val manager = TripVisitManager(cfg.visitRadius, cfg.minVisitDwell)
-    manager.listener = object : TripVisitManager.Listener {
-      override fun onVisitArrive(visit: TripVisitManager.Visit) {
-        emit("onVisit", mapOf("action" to "arrive", "visit" to visit.toMap()))
-      }
+    manager.listener =
+      object : TripVisitManager.Listener {
+        override fun onVisitArrive(visit: TripVisitManager.Visit) {
+          emit("onVisit", mapOf("action" to "arrive", "visit" to visit.toMap()))
+        }
 
-      override fun onVisitDepart(visit: TripVisitManager.Visit) {
-        emit("onVisit", mapOf("action" to "depart", "visit" to visit.toMap()))
-      }
+        override fun onVisitDepart(visit: TripVisitManager.Visit) {
+          emit("onVisit", mapOf("action" to "depart", "visit" to visit.toMap()))
+        }
 
-      override fun onTripStart(trip: TripVisitManager.Trip) {
-        emit("onTrip", mapOf("action" to "start", "trip" to trip.toMap()))
-      }
+        override fun onTripStart(trip: TripVisitManager.Trip) {
+          emit("onTrip", mapOf("action" to "start", "trip" to trip.toMap()))
+        }
 
-      override fun onTripEnd(trip: TripVisitManager.Trip) {
-        emit("onTrip", mapOf("action" to "end", "trip" to trip.toMap()))
+        override fun onTripEnd(trip: TripVisitManager.Trip) {
+          emit("onTrip", mapOf("action" to "end", "trip" to trip.toMap()))
+        }
       }
-    }
     tripManager = manager
     return manager
   }
@@ -408,17 +418,18 @@ object GeoPulseController {
       // Recovery: restore the pre-degrade config once charging, or once the level
       // climbs back above the threshold plus hysteresis (avoids flapping at the
       // boundary). Without this, eco mode would stick for the whole session.
-      val recovered = synchronized(configLock) {
-        if (!degradedForBattery) return@synchronized false
-        val thr = preDegradeConfig?.lowBatteryThreshold ?: 0.0
-        if (charging || (thr > 0.0 && level / 100.0 >= thr + BATTERY_RECOVERY_HYSTERESIS)) {
-          preDegradeConfig?.let { config = it }
-          clearBatteryDegradeState()
-          true
-        } else {
-          false
+      val recovered =
+        synchronized(configLock) {
+          if (!degradedForBattery) return@synchronized false
+          val thr = preDegradeConfig?.lowBatteryThreshold ?: 0.0
+          if (charging || (thr > 0.0 && level / 100.0 >= thr + BATTERY_RECOVERY_HYSTERESIS)) {
+            preDegradeConfig?.let { config = it }
+            clearBatteryDegradeState()
+            true
+          } else {
+            false
+          }
         }
-      }
       if (recovered) {
         emit("onError", mapOf("code" to "BATTERY_OK", "message" to "Tracking restored to normal accuracy (battery $level%)."))
         launchService()
@@ -426,21 +437,22 @@ object GeoPulseController {
       return
     }
 
-    val degraded = synchronized(configLock) {
-      // Re-check under the lock; setConfig/start may have just run on another
-      // thread. Read the current config here so we degrade from the latest one.
-      val base = config
-      if (degradedForBattery || base.lowBatteryThreshold <= 0.0) {
-        false
-      } else if (level / 100.0 <= base.lowBatteryThreshold && !charging) {
-        preDegradeConfig = base
-        degradedForBattery = true
-        config = base.copy().resolvePreset(forceEco = true)
-        true
-      } else {
-        false
+    val degraded =
+      synchronized(configLock) {
+        // Re-check under the lock; setConfig/start may have just run on another
+        // thread. Read the current config here so we degrade from the latest one.
+        val base = config
+        if (degradedForBattery || base.lowBatteryThreshold <= 0.0) {
+          false
+        } else if (level / 100.0 <= base.lowBatteryThreshold && !charging) {
+          preDegradeConfig = base
+          degradedForBattery = true
+          config = base.copy().resolvePreset(forceEco = true)
+          true
+        } else {
+          false
+        }
       }
-    }
     if (degraded) {
       emit("onError", mapOf("code" to "BATTERY_LOW", "message" to "Tracking degraded to eco mode (battery $level%)."))
       // Re-apply the lighter LocationRequest immediately.
@@ -449,7 +461,10 @@ object GeoPulseController {
   }
 
   /** Called by the LocationService watchdog when fixes stop / resume arriving. */
-  fun notifyOutage(active: Boolean, durationMs: Long) {
+  fun notifyOutage(
+    active: Boolean,
+    durationMs: Long,
+  ) {
     emit(
       "onProviderChange",
       mapOf(
@@ -464,7 +479,10 @@ object GeoPulseController {
   }
 
   /** Called by the motion manager when the detected activity changes. */
-  fun notifyActivity(type: String, confidence: Int) {
+  fun notifyActivity(
+    type: String,
+    confidence: Int,
+  ) {
     emit("onActivityChange", mapOf("activity" to type, "confidence" to confidence))
   }
 
@@ -485,21 +503,23 @@ object GeoPulseController {
   ) {
     val acc = accuracy ?: 0.0
     val confidence = LocationMapper.confidence(acc, filtered = false)
-    val location = if (latitude != null && longitude != null) {
-      mapOf(
-        "uuid" to UUID.randomUUID().toString(),
-        "timestamp" to (time ?: System.currentTimeMillis()),
-        "coords" to mapOf(
-          "latitude" to latitude,
-          "longitude" to longitude,
-          "accuracy" to acc,
-        ),
-        "provider" to "geofence",
-        "confidence" to confidence,
-      )
-    } else {
-      lastLocation
-    }
+    val location =
+      if (latitude != null && longitude != null) {
+        mapOf(
+          "uuid" to UUID.randomUUID().toString(),
+          "timestamp" to (time ?: System.currentTimeMillis()),
+          "coords" to
+            mapOf(
+              "latitude" to latitude,
+              "longitude" to longitude,
+              "accuracy" to acc,
+            ),
+          "provider" to "geofence",
+          "confidence" to confidence,
+        )
+      } else {
+        lastLocation
+      }
     emit(
       "onGeofence",
       mapOf(
@@ -524,8 +544,14 @@ object GeoPulseController {
    * built it; create it lazily, but only if geofences were actually persisted —
    * so apps that don't use geofencing pay nothing.
    */
-  private fun feedGeofences(lat: Double, lng: Double) {
-    geofenceManager?.let { it.onLocation(lat, lng); return }
+  private fun feedGeofences(
+    lat: Double,
+    lng: Double,
+  ) {
+    geofenceManager?.let {
+      it.onLocation(lat, lng)
+      return
+    }
     val ctx = appContext ?: return
     GeofenceManager.ensureRestored(ctx)
     if (GeofenceManager.hasAny()) geofences()?.onLocation(lat, lng)
@@ -547,8 +573,7 @@ object GeoPulseController {
     geofences()?.removeAll()
   }
 
-  fun getGeofences(): List<Map<String, Any?>> =
-    geofences()?.getAll()?.map { it.toMap() } ?: emptyList()
+  fun getGeofences(): List<Map<String, Any?>> = geofences()?.getAll()?.map { it.toMap() } ?: emptyList()
 
   /** One-shot location fix for `getCurrentPosition`. */
   fun getCurrentPosition(onResult: (Map<String, Any?>?) -> Unit) {
@@ -578,9 +603,10 @@ object GeoPulseController {
     lng: Double,
     accuracy: Double,
     timeMs: Long,
-  ): KalmanBridge.Result? = synchronized(fusionLock) {
-    ensureFusion()?.process(lat, lng, accuracy, timeMs)
-  }
+  ): KalmanBridge.Result? =
+    synchronized(fusionLock) {
+      ensureFusion()?.process(lat, lng, accuracy, timeMs)
+    }
 
   /**
    * Must be called while holding [fusionLock]. Builds the engine from the
@@ -600,10 +626,11 @@ object GeoPulseController {
     }
   }
 
-  private fun rebuildFusion() = synchronized(fusionLock) {
-    fusion?.destroy()
-    fusion = null
-  }
+  private fun rebuildFusion() =
+    synchronized(fusionLock) {
+      fusion?.destroy()
+      fusion = null
+    }
 
   // ---- persistence + sync ----
 
@@ -612,7 +639,10 @@ object GeoPulseController {
     return store ?: LocationStore.getInstance(ctx).also { store = it }
   }
 
-  private fun persist(map: Map<String, Any?>, cfg: GeoPulseConfig) {
+  private fun persist(
+    map: Map<String, Any?>,
+    cfg: GeoPulseConfig,
+  ) {
     val locationStore = store() ?: return
     val uuid = map["uuid"]?.toString() ?: ""
     val timestamp = (map["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis()
@@ -630,20 +660,27 @@ object GeoPulseController {
 
   private fun enqueueSync() {
     val ctx = appContext ?: return
-    val constraints = Constraints.Builder()
-      .setRequiredNetworkType(NetworkType.CONNECTED)
-      .build()
-    val request = OneTimeWorkRequestBuilder<SyncWorker>()
-      .setConstraints(constraints)
-      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-      .build()
+    val constraints =
+      Constraints
+        .Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build()
+    val request =
+      OneTimeWorkRequestBuilder<SyncWorker>()
+        .setConstraints(constraints)
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+        .build()
     runCatching {
-      WorkManager.getInstance(ctx)
+      WorkManager
+        .getInstance(ctx)
         .enqueueUniqueWork(SyncWorker.UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
     }
   }
 
-  fun getLocations(limit: Int, onResult: (List<Map<String, Any?>>) -> Unit) {
+  fun getLocations(
+    limit: Int,
+    onResult: (List<Map<String, Any?>>) -> Unit,
+  ) {
     val locationStore = store()
     if (locationStore == null) {
       onResult(emptyList())
@@ -654,8 +691,9 @@ object GeoPulseController {
     ioExecutor.execute {
       // getLatest: most recent N, in chronological order (callers want the
       // latest track, not the oldest backlog).
-      val list = runCatching { locationStore.getLatest(effectiveLimit).map { Json.toMap(it.json) } }
-        .getOrDefault(emptyList())
+      val list =
+        runCatching { locationStore.getLatest(effectiveLimit).map { Json.toMap(it.json) } }
+          .getOrDefault(emptyList())
       onResult(list)
     }
   }
@@ -694,11 +732,12 @@ object GeoPulseController {
       // Serialize with the WorkManager sync path so the same rows can't be
       // claimed and uploaded twice.
       synchronized(LocationStore.syncLock) {
-        val limit = if (cfg.batchSync) {
-          cfg.maxRecordsToPersist.coerceAtLeast(1)
-        } else {
-          if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
-        }
+        val limit =
+          if (cfg.batchSync) {
+            cfg.maxRecordsToPersist.coerceAtLeast(1)
+          } else {
+            if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
+          }
         val batch = runCatching { locationStore.getAll(limit) }.getOrDefault(emptyList())
         if (batch.isEmpty()) {
           onResult(emptyList())
@@ -719,7 +758,10 @@ object GeoPulseController {
   // ---- event emission ----
 
   /** Forward an event to JS if a runtime is currently attached. */
-  fun emit(event: String, payload: Map<String, Any?>) {
+  fun emit(
+    event: String,
+    payload: Map<String, Any?>,
+  ) {
     val d = dispatcher
     if (d != null) {
       d.dispatch(event, payload)
@@ -741,13 +783,14 @@ object GeoPulseController {
 
   fun lastLocationMap(): Map<String, Any?>? = lastLocation
 
-  fun stateMap(): Map<String, Any?> = mapOf(
-    "enabled" to enabled,
-    "isMoving" to isMoving,
-    "trackingMode" to "location",
-    "odometer" to odometer,
-    "config" to config.toMap(),
-  )
+  fun stateMap(): Map<String, Any?> =
+    mapOf(
+      "enabled" to enabled,
+      "isMoving" to isMoving,
+      "trackingMode" to "location",
+      "odometer" to odometer,
+      "config" to config.toMap(),
+    )
 
   // ---- debug ----
 
@@ -757,21 +800,23 @@ object GeoPulseController {
    */
   fun emitTestLocation() {
     val now = System.currentTimeMillis()
-    val location = mapOf(
-      "uuid" to UUID.randomUUID().toString(),
-      "timestamp" to now,
-      "coords" to mapOf(
-        "latitude" to 37.33233141,
-        "longitude" to -122.0312186,
-        "accuracy" to 5.0,
-        "altitude" to 0.0,
-        "heading" to 0.0,
-        "speed" to 0.0,
-      ),
-      "isMoving" to isMoving,
-      "filtered" to false,
-      "provider" to "test",
-    )
+    val location =
+      mapOf(
+        "uuid" to UUID.randomUUID().toString(),
+        "timestamp" to now,
+        "coords" to
+          mapOf(
+            "latitude" to 37.33233141,
+            "longitude" to -122.0312186,
+            "accuracy" to 5.0,
+            "altitude" to 0.0,
+            "heading" to 0.0,
+            "speed" to 0.0,
+          ),
+        "isMoving" to isMoving,
+        "filtered" to false,
+        "provider" to "test",
+      )
     lastLocation = location
     emit("onLocation", location)
   }
@@ -791,14 +836,15 @@ object GeoPulseController {
     speed: Double,
     timestamp: Long,
   ) {
-    val loc = Location("simulated").apply {
-      this.latitude = latitude
-      this.longitude = longitude
-      this.accuracy = accuracy.toFloat()
-      this.speed = speed.toFloat()
-      this.time = if (timestamp > 0) timestamp else System.currentTimeMillis()
-      this.elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
-    }
+    val loc =
+      Location("simulated").apply {
+        this.latitude = latitude
+        this.longitude = longitude
+        this.accuracy = accuracy.toFloat()
+        this.speed = speed.toFloat()
+        this.time = if (timestamp > 0) timestamp else System.currentTimeMillis()
+        this.elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+      }
     onLocationUpdate(loc)
   }
 }

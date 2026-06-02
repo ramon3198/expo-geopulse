@@ -24,8 +24,9 @@ import kotlin.math.max
  *  2. Polygon geofences (free) — a polygon is registered as its bounding circle,
  *     then refined with a precise point-in-polygon test when it triggers.
  */
-class GeofenceManager(private val context: Context) {
-
+class GeofenceManager(
+  private val context: Context,
+) {
   private val client: GeofencingClient by lazy {
     LocationServices.getGeofencingClient(context)
   }
@@ -59,12 +60,13 @@ class GeofenceManager(private val context: Context) {
   }
 
   fun removeAll() {
-    val ids = synchronized(registry) {
-      val keys = registry.keys.toList()
-      registry.clear()
-      registeredIds.clear()
-      keys
-    }
+    val ids =
+      synchronized(registry) {
+        val keys = registry.keys.toList()
+        registry.clear()
+        registeredIds.clear()
+        keys
+      }
     if (ids.isNotEmpty()) runCatching { client.removeGeofences(ids) }
     lastRegLat = null
     lastRegLng = null
@@ -80,11 +82,15 @@ class GeofenceManager(private val context: Context) {
   }
 
   /** Called as the device moves; re-registers the nearest geofences when needed. */
-  fun onLocation(latitude: Double, longitude: Double) {
+  fun onLocation(
+    latitude: Double,
+    longitude: Double,
+  ) {
     currentLat = latitude
     currentLng = longitude
-    val moved = lastRegLat == null ||
-      haversineMeters(lastRegLat!!, lastRegLng!!, latitude, longitude) > RECONCILE_DISTANCE_M
+    val moved =
+      lastRegLat == null ||
+        haversineMeters(lastRegLat!!, lastRegLng!!, latitude, longitude) > RECONCILE_DISTANCE_M
     if (moved) reconcile(force = false)
   }
 
@@ -107,20 +113,23 @@ class GeofenceManager(private val context: Context) {
     val lat = currentLat
     val lng = currentLng
 
-    val selected = if (lat != null && lng != null) {
-      all.sortedBy { haversineMeters(lat, lng, it.centerLat, it.centerLng) }.take(MAX_ACTIVE)
-    } else {
-      all.take(MAX_ACTIVE)
-    }
+    val selected =
+      if (lat != null && lng != null) {
+        all.sortedBy { haversineMeters(lat, lng, it.centerLat, it.centerLng) }.take(MAX_ACTIVE)
+      } else {
+        all.take(MAX_ACTIVE)
+      }
     val geofences = selected.map { it.toGeofence() }
     if (geofences.isEmpty()) return
     val selectedIds = selected.map { it.identifier }.toSet()
     val stale = synchronized(registry) { registeredIds - selectedIds }
 
-    val request = GeofencingRequest.Builder()
-      .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
-      .addGeofences(geofences)
-      .build()
+    val request =
+      GeofencingRequest
+        .Builder()
+        .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
+        .addGeofences(geofences)
+        .build()
 
     // Await each step in order: remove stale BEFORE adding, so the OS-registered
     // count can't transiently exceed the 100 cap, and record state only once the
@@ -150,11 +159,12 @@ class GeofenceManager(private val context: Context) {
   private fun geofencePendingIntent(): PendingIntent {
     pendingIntent?.let { return it }
     val intent = Intent(context, GeofenceReceiver::class.java)
-    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-    } else {
-      PendingIntent.FLAG_UPDATE_CURRENT
-    }
+    val flags =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+      } else {
+        PendingIntent.FLAG_UPDATE_CURRENT
+      }
     return PendingIntent.getBroadcast(context, 0, intent, flags).also { pendingIntent = it }
   }
 
@@ -170,8 +180,7 @@ class GeofenceManager(private val context: Context) {
     @Volatile private var currentLng: Double? = null
     @Volatile private var restored = false
 
-    fun specFor(identifier: String): GeofenceSpec? =
-      synchronized(registry) { registry[identifier] }
+    fun specFor(identifier: String): GeofenceSpec? = synchronized(registry) { registry[identifier] }
 
     /** Whether any geofence is registered (in memory). Cheap; no I/O. */
     fun hasAny(): Boolean = synchronized(registry) { registry.isNotEmpty() }
@@ -198,20 +207,29 @@ class GeofenceManager(private val context: Context) {
       }
     }
 
-    fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double =
-      GeoMath.haversineMeters(lat1, lon1, lat2, lon2)
+    fun haversineMeters(
+      lat1: Double,
+      lon1: Double,
+      lat2: Double,
+      lon2: Double,
+    ): Double = GeoMath.haversineMeters(lat1, lon1, lat2, lon2)
 
     /** Ray-casting point-in-polygon test. Vertices are [lat, lng] pairs. */
-    fun pointInPolygon(lat: Double, lng: Double, vertices: List<DoubleArray>): Boolean =
-      GeoMath.pointInPolygon(lat, lng, vertices)
+    fun pointInPolygon(
+      lat: Double,
+      lng: Double,
+      vertices: List<DoubleArray>,
+    ): Boolean = GeoMath.pointInPolygon(lat, lng, vertices)
 
     fun specFromMap(map: Map<String, Any?>): GeofenceSpec {
-      val vertices = (map["vertices"] as? List<*>)?.mapNotNull { entry ->
-        val pair = entry as? List<*> ?: return@mapNotNull null
-        val lat = (pair.getOrNull(0) as? Number)?.toDouble() ?: return@mapNotNull null
-        val lng = (pair.getOrNull(1) as? Number)?.toDouble() ?: return@mapNotNull null
-        doubleArrayOf(lat, lng)
-      }?.takeIf { it.isNotEmpty() }
+      val vertices =
+        (map["vertices"] as? List<*>)
+          ?.mapNotNull { entry ->
+            val pair = entry as? List<*> ?: return@mapNotNull null
+            val lat = (pair.getOrNull(0) as? Number)?.toDouble() ?: return@mapNotNull null
+            val lng = (pair.getOrNull(1) as? Number)?.toDouble() ?: return@mapNotNull null
+            doubleArrayOf(lat, lng)
+          }?.takeIf { it.isNotEmpty() }
       return GeofenceSpec(
         identifier = map["identifier"]?.toString() ?: "",
         latitude = (map["latitude"] as? Number)?.toDouble() ?: 0.0,
@@ -245,29 +263,31 @@ data class GeofenceSpec(
   val centerLat: Double get() = if (isPolygon) vertices!!.map { it[0] }.average() else latitude
   val centerLng: Double get() = if (isPolygon) vertices!!.map { it[1] }.average() else longitude
   val effectiveRadius: Double
-    get() = if (isPolygon) {
-      val cLat = centerLat
-      val cLng = centerLng
-      var r = 0.0
-      for (v in vertices!!) {
-        r = max(r, GeofenceManager.haversineMeters(cLat, cLng, v[0], v[1]))
+    get() =
+      if (isPolygon) {
+        val cLat = centerLat
+        val cLng = centerLng
+        var r = 0.0
+        for (v in vertices!!) {
+          r = max(r, GeofenceManager.haversineMeters(cLat, cLng, v[0], v[1]))
+        }
+        r + 1.0
+      } else {
+        radius
       }
-      r + 1.0
-    } else {
-      radius
-    }
 
-  fun toMap(): Map<String, Any?> = mapOf(
-    "identifier" to identifier,
-    "latitude" to latitude,
-    "longitude" to longitude,
-    "radius" to radius,
-    "notifyOnEntry" to notifyOnEntry,
-    "notifyOnExit" to notifyOnExit,
-    "notifyOnDwell" to notifyOnDwell,
-    "loiteringDelay" to loiteringDelay,
-    "vertices" to vertices?.map { listOf(it[0], it[1]) },
-  )
+  fun toMap(): Map<String, Any?> =
+    mapOf(
+      "identifier" to identifier,
+      "latitude" to latitude,
+      "longitude" to longitude,
+      "radius" to radius,
+      "notifyOnEntry" to notifyOnEntry,
+      "notifyOnExit" to notifyOnExit,
+      "notifyOnDwell" to notifyOnDwell,
+      "loiteringDelay" to loiteringDelay,
+      "vertices" to vertices?.map { listOf(it[0], it[1]) },
+    )
 
   fun toGeofence(): Geofence {
     var transitionTypes = 0
@@ -277,11 +297,13 @@ data class GeofenceSpec(
     if (transitionTypes == 0) {
       transitionTypes = Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT
     }
-    val builder = Geofence.Builder()
-      .setRequestId(identifier)
-      .setCircularRegion(centerLat, centerLng, effectiveRadius.toFloat())
-      .setExpirationDuration(Geofence.NEVER_EXPIRE)
-      .setTransitionTypes(transitionTypes)
+    val builder =
+      Geofence
+        .Builder()
+        .setRequestId(identifier)
+        .setCircularRegion(centerLat, centerLng, effectiveRadius.toFloat())
+        .setExpirationDuration(Geofence.NEVER_EXPIRE)
+        .setTransitionTypes(transitionTypes)
     if (notifyOnDwell) builder.setLoiteringDelay(if (loiteringDelay > 0) loiteringDelay else 30000)
     return builder.build()
   }

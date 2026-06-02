@@ -7,7 +7,10 @@ import com.google.android.gms.location.ActivityTransitionResult
 
 /** Receives Activity Recognition transition broadcasts and forwards them to [MotionManager]. */
 class ActivityTransitionReceiver : BroadcastReceiver() {
-  override fun onReceive(context: Context, intent: Intent) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent,
+  ) {
     if (!ActivityTransitionResult.hasResult(intent)) return
     val result = ActivityTransitionResult.extractResult(intent) ?: return
     for (event in result.transitionEvents) {

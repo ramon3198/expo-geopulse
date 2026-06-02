@@ -23,10 +23,15 @@ import com.google.android.gms.location.DetectedActivity
  * stationary and resume it the moment real movement is detected — the single
  * biggest battery win in background location tracking.
  */
-class MotionManager(private val context: Context) {
-
+class MotionManager(
+  private val context: Context,
+) {
   interface Listener {
-    fun onActivity(type: String, confidence: Int)
+    fun onActivity(
+      type: String,
+      confidence: Int,
+    )
+
     fun onMotionChange(isMoving: Boolean)
   }
 
@@ -54,28 +59,32 @@ class MotionManager(private val context: Context) {
 
   @SuppressLint("MissingPermission")
   private fun requestActivityTransitions() {
-    val activities = intArrayOf(
-      DetectedActivity.STILL,
-      DetectedActivity.WALKING,
-      DetectedActivity.RUNNING,
-      DetectedActivity.ON_BICYCLE,
-      DetectedActivity.IN_VEHICLE,
-      DetectedActivity.ON_FOOT,
-    )
-    val transitions = activities.map { activity ->
-      ActivityTransition.Builder()
-        .setActivityType(activity)
-        .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
-        .build()
-    }
+    val activities =
+      intArrayOf(
+        DetectedActivity.STILL,
+        DetectedActivity.WALKING,
+        DetectedActivity.RUNNING,
+        DetectedActivity.ON_BICYCLE,
+        DetectedActivity.IN_VEHICLE,
+        DetectedActivity.ON_FOOT,
+      )
+    val transitions =
+      activities.map { activity ->
+        ActivityTransition
+          .Builder()
+          .setActivityType(activity)
+          .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+          .build()
+      }
     val request = ActivityTransitionRequest(transitions)
 
     val intent = Intent(context, ActivityTransitionReceiver::class.java)
-    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-    } else {
-      PendingIntent.FLAG_UPDATE_CURRENT
-    }
+    val flags =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+      } else {
+        PendingIntent.FLAG_UPDATE_CURRENT
+      }
     val pi = PendingIntent.getBroadcast(context, 0, intent, flags)
     pendingIntent = pi
 
@@ -104,16 +113,17 @@ class MotionManager(private val context: Context) {
   private fun armSignificantMotion() {
     val sm = sensorManager ?: return
     val sensor = significantMotion ?: return
-    val listener = object : TriggerEventListener() {
-      override fun onTrigger(event: TriggerEvent?) {
-        // Ignore a trigger that fired after stop(), or one from a superseded
-        // listener instance (a new arm replaced this one).
-        if (stopped || triggerListener !== this) return
-        activeListener?.onMotionChange(true)
-        // TYPE_SIGNIFICANT_MOTION is one-shot; re-arm for the next motion.
-        armSignificantMotion()
+    val listener =
+      object : TriggerEventListener() {
+        override fun onTrigger(event: TriggerEvent?) {
+          // Ignore a trigger that fired after stop(), or one from a superseded
+          // listener instance (a new arm replaced this one).
+          if (stopped || triggerListener !== this) return
+          activeListener?.onMotionChange(true)
+          // TYPE_SIGNIFICANT_MOTION is one-shot; re-arm for the next motion.
+          armSignificantMotion()
+        }
       }
-    }
     triggerListener = listener
     runCatching { sm.requestTriggerSensor(listener, sensor) }
   }
@@ -137,7 +147,10 @@ class MotionManager(private val context: Context) {
     private var lastMoving: Boolean? = null
 
     /** Called by [ActivityTransitionReceiver] for each ENTER transition. */
-    fun handleTransition(activityType: Int, @Suppress("UNUSED_PARAMETER") transitionType: Int) {
+    fun handleTransition(
+      activityType: Int,
+      @Suppress("UNUSED_PARAMETER") transitionType: Int,
+    ) {
       val type = toName(activityType)
       activeListener?.onActivity(type, 100)
 
@@ -148,13 +161,14 @@ class MotionManager(private val context: Context) {
       }
     }
 
-    private fun toName(activityType: Int): String = when (activityType) {
-      DetectedActivity.STILL -> "still"
-      DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> "walking"
-      DetectedActivity.RUNNING -> "running"
-      DetectedActivity.ON_BICYCLE -> "on_bicycle"
-      DetectedActivity.IN_VEHICLE -> "in_vehicle"
-      else -> "unknown"
-    }
+    private fun toName(activityType: Int): String =
+      when (activityType) {
+        DetectedActivity.STILL -> "still"
+        DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> "walking"
+        DetectedActivity.RUNNING -> "running"
+        DetectedActivity.ON_BICYCLE -> "on_bicycle"
+        DetectedActivity.IN_VEHICLE -> "in_vehicle"
+        else -> "unknown"
+      }
   }
 }

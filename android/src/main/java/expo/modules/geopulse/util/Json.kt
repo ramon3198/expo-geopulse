@@ -7,16 +7,19 @@ import org.json.JSONObject
 object Json {
   fun toJson(value: Any?): String = wrap(value).toString()
 
-  private fun wrap(value: Any?): Any = when (value) {
-    null -> JSONObject.NULL
-    is Map<*, *> -> JSONObject().apply {
-      for ((k, v) in value) put(k.toString(), wrap(v))
+  private fun wrap(value: Any?): Any =
+    when (value) {
+      null -> JSONObject.NULL
+      is Map<*, *> ->
+        JSONObject().apply {
+          for ((k, v) in value) put(k.toString(), wrap(v))
+        }
+      is List<*> ->
+        JSONArray().apply {
+          for (v in value) put(wrap(v))
+        }
+      else -> value
     }
-    is List<*> -> JSONArray().apply {
-      for (v in value) put(wrap(v))
-    }
-    else -> value
-  }
 
   fun toMap(jsonString: String): Map<String, Any?> = unwrapObject(JSONObject(jsonString))
 
@@ -30,10 +33,11 @@ object Json {
     return map
   }
 
-  private fun unwrap(value: Any?): Any? = when (value) {
-    JSONObject.NULL -> null
-    is JSONObject -> unwrapObject(value)
-    is JSONArray -> (0 until value.length()).map { unwrap(value.get(it)) }
-    else -> value
-  }
+  private fun unwrap(value: Any?): Any? =
+    when (value) {
+      JSONObject.NULL -> null
+      is JSONObject -> unwrapObject(value)
+      is JSONArray -> (0 until value.length()).map { unwrap(value.get(it)) }
+      else -> value
+    }
 }

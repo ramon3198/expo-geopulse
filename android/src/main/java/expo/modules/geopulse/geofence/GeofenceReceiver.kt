@@ -9,16 +9,20 @@ import expo.modules.geopulse.core.GeoPulseController
 
 /** Receives geofence transition broadcasts and forwards them to [GeoPulseController]. */
 class GeofenceReceiver : BroadcastReceiver() {
-  override fun onReceive(context: Context, intent: Intent) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent,
+  ) {
     val event = GeofencingEvent.fromIntent(intent) ?: return
     if (event.hasError()) return
 
-    val action = when (event.geofenceTransition) {
-      Geofence.GEOFENCE_TRANSITION_ENTER -> "ENTER"
-      Geofence.GEOFENCE_TRANSITION_EXIT -> "EXIT"
-      Geofence.GEOFENCE_TRANSITION_DWELL -> "DWELL"
-      else -> return
-    }
+    val action =
+      when (event.geofenceTransition) {
+        Geofence.GEOFENCE_TRANSITION_ENTER -> "ENTER"
+        Geofence.GEOFENCE_TRANSITION_EXIT -> "EXIT"
+        Geofence.GEOFENCE_TRANSITION_DWELL -> "DWELL"
+        else -> return
+      }
     val triggering = event.triggeringGeofences ?: return
     val location = event.triggeringLocation
 

@@ -13,12 +13,12 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
-import java.util.concurrent.atomic.AtomicInteger
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.core.PermissionsManager
 import expo.modules.geopulse.driving.DrivingEventsManager
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.motion.MotionManager
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Foreground service that owns continuous background location tracking.
@@ -50,16 +50,21 @@ class LocationService : Service() {
   // generation it was registered under and ignores fixes from a superseded one
   // (e.g. drained by quitSafely() on a pause or a config-driven re-launch).
   private val locationGeneration = AtomicInteger(0)
-  private val watchdogTick = object : Runnable {
-    override fun run() {
-      checkOutage()
-      watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+  private val watchdogTick =
+    object : Runnable {
+      override fun run() {
+        checkOutage()
+        watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+      }
     }
-  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+  override fun onStartCommand(
+    intent: Intent?,
+    flags: Int,
+    startId: Int,
+  ): Int {
     // On a cold START_STICKY restart the controller singleton is fresh (no JS
     // runtime), so restore the persisted context + config before using it — both
     // for the notification/tracking config and so headless dispatch has `url` /
@@ -131,19 +136,26 @@ class LocationService : Service() {
     GeoPulseController.drivingSpeedSink = null
     val cfg = GeoPulseController.config
     if (!cfg.enableDrivingEvents) return
-    val manager = DrivingEventsManager(
-      applicationContext,
-      cfg.harshAccelThreshold,
-      cfg.harshBrakeThreshold,
-      cfg.speedLimit,
-      cfg.idleTimeout,
-      cfg.drivingMinSpeed,
-    )
-    manager.listener = object : DrivingEventsManager.Listener {
-      override fun onDrivingEvent(type: String, severity: String, magnitude: Double, speedMps: Double) {
-        GeoPulseController.notifyDrivingEvent(type, severity, magnitude, speedMps)
+    val manager =
+      DrivingEventsManager(
+        applicationContext,
+        cfg.harshAccelThreshold,
+        cfg.harshBrakeThreshold,
+        cfg.speedLimit,
+        cfg.idleTimeout,
+        cfg.drivingMinSpeed,
+      )
+    manager.listener =
+      object : DrivingEventsManager.Listener {
+        override fun onDrivingEvent(
+          type: String,
+          severity: String,
+          magnitude: Double,
+          speedMps: Double,
+        ) {
+          GeoPulseController.notifyDrivingEvent(type, severity, magnitude, speedMps)
+        }
       }
-    }
     driving = manager
     manager.start()
     // Route GPS speed from the location pipeline into the detector.
@@ -152,18 +164,22 @@ class LocationService : Service() {
 
   private fun startMotionDetection() {
     motion?.stop() // idempotent: never leave a second detector running on restart
-    MotionManager.activeListener = object : MotionManager.Listener {
-      override fun onActivity(type: String, confidence: Int) {
-        GeoPulseController.notifyActivity(type, confidence)
-      }
+    MotionManager.activeListener =
+      object : MotionManager.Listener {
+        override fun onActivity(
+          type: String,
+          confidence: Int,
+        ) {
+          GeoPulseController.notifyActivity(type, confidence)
+        }
 
-      override fun onMotionChange(isMoving: Boolean) {
-        GeoPulseController.notifyMotionChange(isMoving)
-        if (GeoPulseController.config.stopOnStationary) {
-          if (isMoving) resumeLocationUpdates() else pauseLocationUpdates()
+        override fun onMotionChange(isMoving: Boolean) {
+          GeoPulseController.notifyMotionChange(isMoving)
+          if (GeoPulseController.config.stopOnStationary) {
+            if (isMoving) resumeLocationUpdates() else pauseLocationUpdates()
+          }
         }
       }
-    }
     val manager = MotionManager(applicationContext)
     motion = manager
     manager.start()
@@ -238,15 +254,17 @@ class LocationService : Service() {
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      val channel = NotificationChannel(
-        CHANNEL_ID,
-        cfg?.channelName ?: "Location tracking",
-        NotificationManager.IMPORTANCE_LOW,
-      )
+      val channel =
+        NotificationChannel(
+          CHANNEL_ID,
+          cfg?.channelName ?: "Location tracking",
+          NotificationManager.IMPORTANCE_LOW,
+        )
       manager.createNotificationChannel(channel)
     }
 
-    return NotificationCompat.Builder(this, CHANNEL_ID)
+    return NotificationCompat
+      .Builder(this, CHANNEL_ID)
       .setContentTitle(title)
       .setContentText(text)
       .setSmallIcon(resolveSmallIcon(cfg?.smallIcon))

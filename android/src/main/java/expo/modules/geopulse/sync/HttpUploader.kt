@@ -7,7 +7,11 @@ import java.util.zip.GZIPOutputStream
 
 /** Posts a JSON body to a configured endpoint via HttpURLConnection (no extra deps). */
 object HttpUploader {
-  data class Result(val success: Boolean, val status: Int, val body: String?)
+  data class Result(
+    val success: Boolean,
+    val status: Int,
+    val body: String?,
+  )
 
   // Below this size gzip's ~20-byte header/overhead isn't worth it; above it, a
   // batch of locations compresses ~80-90%, cutting upload bytes and battery.
@@ -25,16 +29,17 @@ object HttpUploader {
       val raw = body.toByteArray(Charsets.UTF_8)
       val gzip = raw.size >= GZIP_MIN_BYTES
       val payload = if (gzip) gzip(raw) else raw
-      connection = (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = if (method.equals("PUT", ignoreCase = true)) "PUT" else "POST"
-        connectTimeout = timeoutMs
-        readTimeout = timeoutMs
-        doOutput = true
-        setRequestProperty("Content-Type", "application/json")
-        if (gzip) setRequestProperty("Content-Encoding", "gzip")
-        setFixedLengthStreamingMode(payload.size)
-        for ((key, value) in headers) setRequestProperty(key, value)
-      }
+      connection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+          requestMethod = if (method.equals("PUT", ignoreCase = true)) "PUT" else "POST"
+          connectTimeout = timeoutMs
+          readTimeout = timeoutMs
+          doOutput = true
+          setRequestProperty("Content-Type", "application/json")
+          if (gzip) setRequestProperty("Content-Encoding", "gzip")
+          setFixedLengthStreamingMode(payload.size)
+          for ((key, value) in headers) setRequestProperty(key, value)
+        }
       connection.outputStream.use { it.write(payload) }
       val code = connection.responseCode
       val success = code in 200..299
@@ -54,13 +59,21 @@ object HttpUploader {
    * `params` set it's `{ "locations": [...], ...params }` so callers can attach
    * custom fields (e.g. an auth/device token) to every sync request.
    */
-  fun buildBody(locationJsons: List<String>, params: Map<String, Any?>): String {
+  fun buildBody(
+    locationJsons: List<String>,
+    params: Map<String, Any?>,
+  ): String {
     val arr = "[" + locationJsons.joinToString(",") + "]"
     if (params.isEmpty()) return arr
     // params serializes to a well-formed object; splice its inner fields next to
     // "locations". (Both pieces are valid JSON, so the result is too.)
-    val inner = expo.modules.geopulse.util.Json.toJson(params)
-      .trim().removePrefix("{").removeSuffix("}").trim()
+    val inner =
+      expo.modules.geopulse.util.Json
+        .toJson(params)
+        .trim()
+        .removePrefix("{")
+        .removeSuffix("}")
+        .trim()
     return if (inner.isEmpty()) "{\"locations\":$arr}" else "{\"locations\":$arr,$inner}"
   }
 

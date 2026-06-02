@@ -10,7 +10,10 @@ import expo.modules.geopulse.core.GeoPulseController
  * persisted config and re-launches the foreground service — no JS runtime needed.
  */
 class BootReceiver : BroadcastReceiver() {
-  override fun onReceive(context: Context, intent: Intent?) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent?,
+  ) {
     when (intent?.action) {
       Intent.ACTION_BOOT_COMPLETED,
       "android.intent.action.QUICKBOOT_POWERON",

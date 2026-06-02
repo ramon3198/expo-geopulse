@@ -10,7 +10,9 @@ import expo.modules.geopulse.util.Json
  * them — and the registered-id set to reconcile correctly without exceeding the
  * 100-geofence OS cap.
  */
-class GeofenceStore(context: Context) {
+class GeofenceStore(
+  context: Context,
+) {
   private val prefs =
     context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 

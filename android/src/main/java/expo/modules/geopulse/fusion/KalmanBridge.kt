@@ -23,7 +23,12 @@ class KalmanBridge(
 
   private var handle: Long = nativeCreate(enableKalman, accuracyFilter, maxSpeed, processNoise)
 
-  fun process(latitude: Double, longitude: Double, accuracy: Double, timestampMs: Long): Result {
+  fun process(
+    latitude: Double,
+    longitude: Double,
+    accuracy: Double,
+    timestampMs: Long,
+  ): Result {
     // Defensive: never call into a destroyed handle (callers serialize this, but
     // a 0 handle must pass the fix through rather than crash the native layer).
     if (handle == 0L) return Result(accepted = true, filtered = false, latitude, longitude, accuracy)

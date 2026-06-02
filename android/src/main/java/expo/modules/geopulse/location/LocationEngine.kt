@@ -29,8 +29,9 @@ import expo.modules.geopulse.core.PermissionsManager
  * Permission checks are the caller's responsibility, but [start]/[getCurrentLocation]
  * also no-op safely if permission is missing.
  */
-class LocationEngine(private val context: Context) {
-
+class LocationEngine(
+  private val context: Context,
+) {
   fun interface LocationUpdateListener {
     fun onLocation(location: Location)
   }
@@ -51,7 +52,10 @@ class LocationEngine(private val context: Context) {
   private var handlerThread: HandlerThread? = null
 
   @SuppressLint("MissingPermission")
-  fun start(config: GeoPulseConfig, listener: LocationUpdateListener) {
+  fun start(
+    config: GeoPulseConfig,
+    listener: LocationUpdateListener,
+  ) {
     if (!PermissionsManager.hasLocationPermission(context)) return
     stop() // idempotent: never double-register listeners
     val thread = HandlerThread("geopulse-location").also { it.start() }
@@ -61,33 +65,45 @@ class LocationEngine(private val context: Context) {
   }
 
   @SuppressLint("MissingPermission")
-  private fun startFused(config: GeoPulseConfig, listener: LocationUpdateListener, looper: Looper) {
+  private fun startFused(
+    config: GeoPulseConfig,
+    listener: LocationUpdateListener,
+    looper: Looper,
+  ) {
     val client = LocationServices.getFusedLocationProviderClient(context)
     fusedClient = client
-    val request = LocationRequest.Builder(toGmsPriority(config.desiredAccuracy), config.locationUpdateInterval)
-      .setMinUpdateIntervalMillis(config.fastestLocationUpdateInterval)
-      .setMinUpdateDistanceMeters(config.distanceFilter.toFloat())
-      .setWaitForAccurateLocation(false)
-      .build()
-    val callback = object : LocationCallback() {
-      override fun onLocationResult(result: LocationResult) {
-        result.lastLocation?.let { listener.onLocation(it) }
+    val request =
+      LocationRequest
+        .Builder(toGmsPriority(config.desiredAccuracy), config.locationUpdateInterval)
+        .setMinUpdateIntervalMillis(config.fastestLocationUpdateInterval)
+        .setMinUpdateDistanceMeters(config.distanceFilter.toFloat())
+        .setWaitForAccurateLocation(false)
+        .build()
+    val callback =
+      object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+          result.lastLocation?.let { listener.onLocation(it) }
+        }
       }
-    }
     fusedCallback = callback
     client.requestLocationUpdates(request, callback, looper)
   }
 
   @SuppressLint("MissingPermission")
-  private fun startRaw(config: GeoPulseConfig, listener: LocationUpdateListener, looper: Looper) {
+  private fun startRaw(
+    config: GeoPulseConfig,
+    listener: LocationUpdateListener,
+    looper: Looper,
+  ) {
     val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     locationManager = lm
-    val provider = when {
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-        lm.allProviders.contains(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
-      lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-      else -> LocationManager.NETWORK_PROVIDER
-    }
+    val provider =
+      when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+          lm.allProviders.contains(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
+        lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+        else -> LocationManager.NETWORK_PROVIDER
+      }
     val l = LocationListener { listener.onLocation(it) }
     rawListener = l
     lm.requestLocationUpdates(
@@ -112,32 +128,40 @@ class LocationEngine(private val context: Context) {
   }
 
   @SuppressLint("MissingPermission")
-  fun getCurrentLocation(config: GeoPulseConfig, onResult: (Location?) -> Unit) {
+  fun getCurrentLocation(
+    config: GeoPulseConfig,
+    onResult: (Location?) -> Unit,
+  ) {
     if (!PermissionsManager.hasLocationPermission(context)) {
       onResult(null)
       return
     }
     if (usesGms) {
       val client = LocationServices.getFusedLocationProviderClient(context)
-      val request = CurrentLocationRequest.Builder()
-        .setPriority(toGmsPriority(config.desiredAccuracy))
-        .build()
-      client.getCurrentLocation(request, null)
+      val request =
+        CurrentLocationRequest
+          .Builder()
+          .setPriority(toGmsPriority(config.desiredAccuracy))
+          .build()
+      client
+        .getCurrentLocation(request, null)
         .addOnSuccessListener { onResult(it) }
         .addOnFailureListener { onResult(null) }
     } else {
       val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-      val last = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-        ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+      val last =
+        lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+          ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
       onResult(last)
     }
   }
 
-  private fun toGmsPriority(accuracy: Int): Int = when (accuracy) {
-    GeoPulseConfig.Accuracy.HIGH -> Priority.PRIORITY_HIGH_ACCURACY
-    GeoPulseConfig.Accuracy.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
-    GeoPulseConfig.Accuracy.LOW -> Priority.PRIORITY_LOW_POWER
-    GeoPulseConfig.Accuracy.PASSIVE -> Priority.PRIORITY_PASSIVE
-    else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
-  }
+  private fun toGmsPriority(accuracy: Int): Int =
+    when (accuracy) {
+      GeoPulseConfig.Accuracy.HIGH -> Priority.PRIORITY_HIGH_ACCURACY
+      GeoPulseConfig.Accuracy.BALANCED -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
+      GeoPulseConfig.Accuracy.LOW -> Priority.PRIORITY_LOW_POWER
+      GeoPulseConfig.Accuracy.PASSIVE -> Priority.PRIORITY_PASSIVE
+      else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
+    }
 }

@@ -27,12 +27,15 @@ object LocationSettings {
     onUnavailable: () -> Unit,
   ) {
     val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000).build()
-    val settingsRequest = LocationSettingsRequest.Builder()
-      .addLocationRequest(request)
-      .setAlwaysShow(true)
-      .build()
+    val settingsRequest =
+      LocationSettingsRequest
+        .Builder()
+        .addLocationRequest(request)
+        .setAlwaysShow(true)
+        .build()
 
-    LocationServices.getSettingsClient(context)
+    LocationServices
+      .getSettingsClient(context)
       .checkLocationSettings(settingsRequest)
       .addOnSuccessListener { onEnabled() }
       .addOnFailureListener { e ->

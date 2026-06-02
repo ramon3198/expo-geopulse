@@ -18,7 +18,10 @@ import expo.modules.geopulse.db.LocationStore
  * only on a successful (2xx) response. WorkManager handles retry/backoff and
  * network constraints, so data survives offline periods and app restarts.
  */
-class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+class SyncWorker(
+  context: Context,
+  params: WorkerParameters,
+) : Worker(context, params) {
   override fun doWork(): Result {
     var config = GeoPulseController.config
     if (config.url == null) {
@@ -35,11 +38,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     val store = LocationStore.getInstance(applicationContext)
     // batchSync=true uploads the whole backlog in one request; otherwise chunk by
     // maxBatchSize (the default).
-    val batchSize = if (config.batchSync) {
-      config.maxRecordsToPersist.coerceAtLeast(1)
-    } else {
-      if (config.maxBatchSize > 0) config.maxBatchSize else 250
-    }
+    val batchSize =
+      if (config.batchSync) {
+        config.maxRecordsToPersist.coerceAtLeast(1)
+      } else {
+        if (config.maxBatchSize > 0) config.maxBatchSize else 250
+      }
 
     // Serialize the whole drain with the manual sync() path so they can't claim
     // and upload the same rows twice.
@@ -82,12 +86,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
     // as this one completes, and report success.
     if (store.count() > 0) {
       runCatching {
-        val next = OneTimeWorkRequestBuilder<SyncWorker>()
-          .setConstraints(
-            Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-          )
-          .build()
-        WorkManager.getInstance(applicationContext)
+        val next =
+          OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(
+              Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
+            ).build()
+        WorkManager
+          .getInstance(applicationContext)
           .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, next)
       }
     }
@@ -95,8 +100,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : Worker(context, p
   }
 
   /** Transient = worth retrying with backoff: network error, 5xx, 408, 429. */
-  private fun isTransient(status: Int): Boolean =
-    status == 0 || status == 408 || status == 429 || status in 500..599
+  private fun isTransient(status: Int): Boolean = status == 0 || status == 408 || status == 429 || status in 500..599
 
   companion object {
     const val UNIQUE_WORK_NAME = "geopulse-sync"

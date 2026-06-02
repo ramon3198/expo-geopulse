@@ -20,11 +20,13 @@ class GeoPulseHeadlessService : HeadlessJsTaskService() {
   override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
     val event = intent?.getStringExtra(EXTRA_EVENT) ?: return null
     val payload = intent.getStringExtra(EXTRA_PAYLOAD) ?: "{}"
-    val data = Arguments.createMap().apply {
-      putString("event", event)
-      putString("payload", payload)
-    }
-    return HeadlessJsTaskConfig(TASK_KEY, data, TIMEOUT_MS, /* allowedInForeground = */ true)
+    val data =
+      Arguments.createMap().apply {
+        putString("event", event)
+        putString("payload", payload)
+      }
+    // Last arg is allowedInForeground = true (run even while the app is foregrounded).
+    return HeadlessJsTaskConfig(TASK_KEY, data, TIMEOUT_MS, true)
   }
 
   companion object {
@@ -39,12 +41,17 @@ class GeoPulseHeadlessService : HeadlessJsTaskService() {
      * from the running foreground service (the process is alive, so the
      * background-service-start restriction doesn't apply).
      */
-    fun dispatch(context: Context, event: String, payloadJson: String) {
+    fun dispatch(
+      context: Context,
+      event: String,
+      payloadJson: String,
+    ) {
       val ctx = context.applicationContext
-      val intent = Intent(ctx, GeoPulseHeadlessService::class.java).apply {
-        putExtra(EXTRA_EVENT, event)
-        putExtra(EXTRA_PAYLOAD, payloadJson)
-      }
+      val intent =
+        Intent(ctx, GeoPulseHeadlessService::class.java).apply {
+          putExtra(EXTRA_EVENT, event)
+          putExtra(EXTRA_PAYLOAD, payloadJson)
+        }
       // Start the service FIRST, and only then hold the wakelock — and only if the
       // start was accepted. Acquiring before startService would leak the wakelock
       // forever if the start is blocked (a background-start restriction), because

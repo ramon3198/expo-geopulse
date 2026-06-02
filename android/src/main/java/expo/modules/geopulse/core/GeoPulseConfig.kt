@@ -11,13 +11,14 @@ class NotificationConfig : Record {
   @Field var smallIcon: String? = null
   @Field var priority: String? = null
 
-  fun toMap(): Map<String, Any?> = mapOf(
-    "title" to title,
-    "text" to text,
-    "channelName" to channelName,
-    "smallIcon" to smallIcon,
-    "priority" to priority,
-  )
+  fun toMap(): Map<String, Any?> =
+    mapOf(
+      "title" to title,
+      "text" to text,
+      "channelName" to channelName,
+      "smallIcon" to smallIcon,
+      "priority" to priority,
+    )
 }
 
 /**
@@ -160,43 +161,44 @@ class GeoPulseConfig : Record {
     return c
   }
 
-  fun toMap(): Map<String, Any?> = mapOf(
-    "desiredAccuracy" to desiredAccuracy,
-    "distanceFilter" to distanceFilter,
-    "locationUpdateInterval" to locationUpdateInterval,
-    "fastestLocationUpdateInterval" to fastestLocationUpdateInterval,
-    "preset" to preset,
-    "lowBatteryThreshold" to lowBatteryThreshold,
-    "stopOnStationary" to stopOnStationary,
-    "stationaryRadius" to stationaryRadius,
-    "disableMockLocations" to disableMockLocations,
-    "outageThreshold" to outageThreshold,
-    "enableTripDetection" to enableTripDetection,
-    "visitRadius" to visitRadius,
-    "minVisitDwell" to minVisitDwell,
-    "enableDrivingEvents" to enableDrivingEvents,
-    "harshAccelThreshold" to harshAccelThreshold,
-    "harshBrakeThreshold" to harshBrakeThreshold,
-    "speedLimit" to speedLimit,
-    "idleTimeout" to idleTimeout,
-    "drivingMinSpeed" to drivingMinSpeed,
-    "enableKalman" to enableKalman,
-    "accuracyFilter" to accuracyFilter,
-    "enableHeadless" to enableHeadless,
-    "startOnBoot" to startOnBoot,
-    "url" to url,
-    "httpMethod" to httpMethod,
-    "headers" to headers,
-    "params" to params,
-    "autoSync" to autoSync,
-    "autoSyncThreshold" to autoSyncThreshold,
-    "batchSync" to batchSync,
-    "maxBatchSize" to maxBatchSize,
-    "maxRecordsToPersist" to maxRecordsToPersist,
-    "debug" to debug,
-    "logLevel" to logLevel,
-    "notification" to notification?.toMap(),
-  )
+  fun toMap(): Map<String, Any?> =
+    mapOf(
+      "desiredAccuracy" to desiredAccuracy,
+      "distanceFilter" to distanceFilter,
+      "locationUpdateInterval" to locationUpdateInterval,
+      "fastestLocationUpdateInterval" to fastestLocationUpdateInterval,
+      "preset" to preset,
+      "lowBatteryThreshold" to lowBatteryThreshold,
+      "stopOnStationary" to stopOnStationary,
+      "stationaryRadius" to stationaryRadius,
+      "disableMockLocations" to disableMockLocations,
+      "outageThreshold" to outageThreshold,
+      "enableTripDetection" to enableTripDetection,
+      "visitRadius" to visitRadius,
+      "minVisitDwell" to minVisitDwell,
+      "enableDrivingEvents" to enableDrivingEvents,
+      "harshAccelThreshold" to harshAccelThreshold,
+      "harshBrakeThreshold" to harshBrakeThreshold,
+      "speedLimit" to speedLimit,
+      "idleTimeout" to idleTimeout,
+      "drivingMinSpeed" to drivingMinSpeed,
+      "enableKalman" to enableKalman,
+      "accuracyFilter" to accuracyFilter,
+      "enableHeadless" to enableHeadless,
+      "startOnBoot" to startOnBoot,
+      "url" to url,
+      "httpMethod" to httpMethod,
+      "headers" to headers,
+      "params" to params,
+      "autoSync" to autoSync,
+      "autoSyncThreshold" to autoSyncThreshold,
+      "batchSync" to batchSync,
+      "maxBatchSize" to maxBatchSize,
+      "maxRecordsToPersist" to maxRecordsToPersist,
+      "debug" to debug,
+      "logLevel" to logLevel,
+      "notification" to notification?.toMap(),
+    )
 
   /** Mirrors the JS `Accuracy` enum; resolved to FusedLocation priorities. */
   object Accuracy {

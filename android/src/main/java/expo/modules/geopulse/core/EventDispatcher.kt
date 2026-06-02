@@ -7,5 +7,8 @@ package expo.modules.geopulse.core
  * decoupled from the React runtime and keep working when no JS listener exists.
  */
 fun interface EventDispatcher {
-  fun dispatch(event: String, payload: Map<String, Any?>)
+  fun dispatch(
+    event: String,
+    payload: Map<String, Any?>,
+  )
 }
