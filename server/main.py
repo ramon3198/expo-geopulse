@@ -16,7 +16,7 @@ from typing import Any
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
@@ -74,6 +74,12 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _broadcast_locations(device: str, locations: list[dict[str, Any]]) -> None:
+    """Push locations to dashboards. Runs as a background task after the response."""
+    for loc in locations:
+        await manager.broadcast({"type": "location", "device": device, "location": loc})
+
+
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
@@ -117,7 +123,7 @@ def install_page() -> str:
 
 
 @app.post("/locations")
-async def ingest_locations(request: Request) -> JSONResponse:
+async def ingest_locations(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     """Ingest endpoint the SDK posts to.
 
     Accepts either a bare array of locations (what GeoPulse sends) or an object
@@ -140,14 +146,16 @@ async def ingest_locations(request: Request) -> JSONResponse:
         elif "coords" in body:
             locations = [body]
 
-    # Persist everything first (durable, fast), then broadcast (best-effort), so a
-    # slow dashboard client can't delay or drop the ingestion of a batch.
-    for loc in locations:
-        db.insert_location(device, loc)
-    for loc in locations:
-        await manager.broadcast({"type": "location", "device": device, "location": loc})
+    # Persist everything first (durable, fast, idempotent by uuid), then broadcast
+    # AFTER responding (FastAPI background task). The SDK gets its 200 immediately,
+    # so a slow dashboard can't push the response past the uploader's read timeout
+    # and trigger a retry — and even if it does retry, insert_location dedupes by
+    # (device, uuid). Only newly-inserted points are broadcast.
+    fresh = [loc for loc in locations if db.insert_location(device, loc)]
+    if fresh:
+        background_tasks.add_task(_broadcast_locations, device, fresh)
 
-    return JSONResponse({"received": len(locations)})
+    return JSONResponse({"received": len(locations), "stored": len(fresh)})
 
 
 @app.post("/events/{kind}")

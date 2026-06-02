@@ -42,6 +42,7 @@ def init_db() -> None:
                 json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_loc_device ON locations(device, id);
+            CREATE INDEX IF NOT EXISTS idx_loc_device_uuid ON locations(device, uuid);
 
             CREATE TABLE IF NOT EXISTS trips (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,9 +83,24 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def insert_location(device: str, loc: dict[str, Any]) -> None:
+def insert_location(device: str, loc: dict[str, Any]) -> bool:
+    """Insert a location, idempotent by (device, uuid).
+
+    Returns True if a new row was inserted, False if it was a duplicate (so the
+    SDK can safely retry an upload — e.g. after a slow response trips its read
+    timeout — without duplicating points). The existence check + insert run under
+    the same lock, so concurrent requests can't both insert the same uuid.
+    """
     coords = loc.get("coords") or {}
+    uuid = loc.get("uuid")
     with _lock:
+        if uuid is not None:
+            existing = _conn.execute(
+                "SELECT 1 FROM locations WHERE device = ? AND uuid = ? LIMIT 1",
+                (device, uuid),
+            ).fetchone()
+            if existing is not None:
+                return False
         _conn.execute(
             """INSERT INTO locations
                (device, uuid, timestamp, latitude, longitude, accuracy, speed,
@@ -92,7 +108,7 @@ def insert_location(device: str, loc: dict[str, Any]) -> None:
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 device,
-                loc.get("uuid"),
+                uuid,
                 loc.get("timestamp"),
                 coords.get("latitude"),
                 coords.get("longitude"),
@@ -106,6 +122,7 @@ def insert_location(device: str, loc: dict[str, Any]) -> None:
             ),
         )
         _conn.commit()
+        return True
 
 
 def insert_trip(device: str, event: dict[str, Any]) -> None:
