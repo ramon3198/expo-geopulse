@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1
+
+### Fixes
+
+- **Headless `onError` no longer dropped on a cold sync.** When WorkManager ran
+  `SyncWorker` in a fresh process (app killed/rebooted) and the backend returned a
+  terminal HTTP error, the emitted `onError` was discarded because the controller
+  had a default config and no context. The worker now initializes the controller
+  first, so the headless task receives the event.
+- **`batchSync: true` now really uploads the whole backlog.** With unlimited
+  persistence (`maxRecordsToPersist: 0`) the batch size was clamped to a single
+  row, so `sync()` and the background worker uploaded one location at a time.
+  Fixed in both the manual and WorkManager paths.
+
 ## 0.5.0
 
 ### Performance
