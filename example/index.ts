@@ -9,7 +9,8 @@ import Root from './Root';
 // a DISTINCT device id, so the dashboard's "headless-proof" device only grows
 // while the app is closed — unambiguous evidence the JS task ran with no UI alive.
 // (The native pipeline keeps syncing under the normal device id either way.)
-const HEADLESS_PROOF_URL = 'https://gpsapi.carcamodev.site/locations';
+const HEADLESS_PROOF_URL =
+  (process.env.EXPO_PUBLIC_API_URL ?? 'https://your-server.example.com') + '/locations';
 GeoPulse.registerHeadlessTask(async ({ event, data }) => {
   if (event !== 'onLocation') return;
   try {

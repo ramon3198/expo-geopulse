@@ -1,13 +1,9 @@
 // ---- Backend ----
 function resolveApiBase(): string {
+  // Set VITE_API_BASE in dashboard/.env.local for dev, or at build time when
+  // deploying behind a domain. Falls back to a local backend.
   const env = import.meta.env.VITE_API_BASE as string | undefined;
   if (env) return env;
-  if (typeof window !== 'undefined') {
-    const { hostname, protocol } = window.location;
-    if (hostname.endsWith('carcamodev.site')) {
-      return `${protocol}//gpsapi.carcamodev.site`;
-    }
-  }
   return 'http://127.0.0.1:8787';
 }
 

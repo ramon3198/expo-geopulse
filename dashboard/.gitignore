@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local environment (real endpoints/hosts) — keep out of the public repo
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

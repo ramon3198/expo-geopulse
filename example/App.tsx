@@ -19,8 +19,11 @@ import { MiniMap } from './MiniMap';
 import { ThemeToggle } from './ThemeToggle';
 import { useTheme } from './ThemeProvider';
 
-const DEVICE_ID = 'ramon-phone';
-const API = 'https://gpsapi.carcamodev.site';
+// Configure these in example/.env.local (gitignored). EXPO_PUBLIC_* vars are
+// inlined by Expo at build time; the defaults are placeholders so the public
+// repo never points at a real backend.
+const API = process.env.EXPO_PUBLIC_API_URL ?? 'https://your-server.example.com';
+const DEVICE_ID = process.env.EXPO_PUBLIC_DEVICE_ID ?? 'demo-device';
 
 type Mode = 'eco' | 'standard' | 'high';
 
