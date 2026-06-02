@@ -8,8 +8,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import expo.modules.geopulse.core.ConfigStore
-import expo.modules.geopulse.core.GeoPulseConfig
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.db.LocationStore
 
@@ -23,16 +21,14 @@ class SyncWorker(
   params: WorkerParameters,
 ) : Worker(context, params) {
   override fun doWork(): Result {
-    var config = GeoPulseController.config
-    if (config.url == null) {
-      // WorkManager can run us in a fresh process (after the app was killed, or
-      // after a reboot) where the in-memory controller config is still default.
-      // Fall back to the persisted config so a backlog buffered before the
-      // restart still uploads instead of being silently dropped.
-      runCatching { ConfigStore(applicationContext).loadConfig() }
-        .getOrNull()
-        ?.let { config = GeoPulseConfig.fromMap(it) }
-    }
+    // WorkManager can run us in a fresh process (after the app was killed, or after a
+    // reboot) where the controller is uninitialized. ensureInitialized restores the
+    // persisted config AND appContext into the controller — both so a backlog buffered
+    // before the restart still uploads, and so a terminal HTTP error below can still
+    // reach the headless task (emit() dispatches to headless only when enableHeadless
+    // and appContext are both set, which they are not in a default controller).
+    GeoPulseController.ensureInitialized(applicationContext)
+    val config = GeoPulseController.config
     val url = config.url ?: return Result.success()
 
     val store = LocationStore.getInstance(applicationContext)
@@ -40,7 +36,10 @@ class SyncWorker(
     // maxBatchSize (the default).
     val batchSize =
       if (config.batchSync) {
-        config.maxRecordsToPersist.coerceAtLeast(1)
+        // getAll() treats <= 0 as "no limit", so pass maxRecordsToPersist straight
+        // through (0 = unlimited persistence -> all rows). coerceAtLeast(1) was wrong:
+        // it shrank the unlimited case to a single row per run, breaking the contract.
+        config.maxRecordsToPersist
       } else {
         if (config.maxBatchSize > 0) config.maxBatchSize else 250
       }

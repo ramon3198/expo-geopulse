@@ -734,7 +734,9 @@ object GeoPulseController {
       synchronized(LocationStore.syncLock) {
         val limit =
           if (cfg.batchSync) {
-            cfg.maxRecordsToPersist.coerceAtLeast(1)
+            // Whole backlog in one request; getAll() treats <= 0 as "no limit", so
+            // pass maxRecordsToPersist through (0 = unlimited persistence -> all rows).
+            cfg.maxRecordsToPersist
           } else {
             if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
           }
