@@ -170,7 +170,11 @@ object GeoPulseController {
         clearBatteryDegradeState()
       }
     }
-    launchService()
+    // If the service couldn't actually start (e.g. a background-start restriction
+    // on Android 12+, or no background permission at boot), reflect that instead
+    // of reporting tracking active with no service running — important at boot,
+    // where there's no JS dispatcher to receive the SERVICE_START_FAILED error.
+    if (!launchService()) enabled = false
   }
 
   /** Forget any battery auto-degrade state (an explicit config is authoritative). */
@@ -184,14 +188,20 @@ object GeoPulseController {
    * the current config — re-issuing the GPS request and reconciling driving
    * detection — so this doubles as "apply config to the running tracker".
    */
-  private fun launchService() {
-    val ctx = appContext ?: return
+  /**
+   * (Re)starts the foreground service and reports whether the start was accepted.
+   * The service's `onStartCommand` re-applies the current config — re-issuing the
+   * GPS request and reconciling driving detection — so this doubles as "apply
+   * config to the running tracker".
+   */
+  private fun launchService(): Boolean {
+    val ctx = appContext ?: return false
     val intent = Intent(ctx, LocationService::class.java)
     // Guard against ForegroundServiceStartNotAllowedException: re-launching to
     // apply config (or a battery degrade) can happen while the app is in the
     // background on Android 12+. The service is normally already running, but
     // OEM/edge behavior varies, so never let a failed (re)start crash the caller.
-    runCatching {
+    return runCatching {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         ctx.startForegroundService(intent)
       } else {
@@ -210,7 +220,7 @@ object GeoPulseController {
             ?: "Could not start the tracking service (it may be blocked from the background)."),
         ),
       )
-    }
+    }.isSuccess
   }
 
   fun stop() {
