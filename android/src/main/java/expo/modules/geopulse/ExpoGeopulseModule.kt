@@ -5,7 +5,9 @@ import android.os.Build
 import expo.modules.geopulse.core.GeoPulseConfig
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.core.PermissionsManager
+import expo.modules.geopulse.headless.GeoPulseHeadlessService
 import expo.modules.geopulse.location.LocationSettings
+import expo.modules.geopulse.util.Json
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -301,6 +303,24 @@ class ExpoGeopulseModule : Module() {
         )
         promise.resolve(null)
       }
+    }
+
+    // testing — directly dispatch a headless task (validates the registered JS
+    // headless task runs via the native HeadlessJsTaskService), independent of
+    // the app being killed. Uses the last known location, or a synthetic one.
+    AsyncFunction("simulateHeadless") { promise: Promise ->
+      val ctx = appContext.reactContext?.applicationContext
+      if (ctx == null) {
+        promise.reject(CodedException("Context unavailable."))
+        return@AsyncFunction
+      }
+      val loc = controller.lastLocationMap() ?: mapOf(
+        "uuid" to "headless-test-${System.currentTimeMillis()}",
+        "timestamp" to System.currentTimeMillis(),
+        "coords" to mapOf("latitude" to 0.0, "longitude" to 0.0, "accuracy" to 5.0),
+      )
+      GeoPulseHeadlessService.dispatch(ctx, "onLocation", Json.toJson(loc))
+      promise.resolve(true)
     }
   }
 }

@@ -1,5 +1,6 @@
 import GeoPulse, {
   Accuracy,
+  GeoPulseNativeModule,
   type Location,
   type PermissionStatus,
 } from 'expo-geopulse';
@@ -320,6 +321,17 @@ export default function App() {
                   const up = await GeoPulse.sync();
                   append(`sync  uploaded ${up.length}`);
                   setQueued(await GeoPulse.getCount());
+                } catch (e) {
+                  append(`error  ${String(e)}`);
+                }
+              }}
+            />
+            <Tool
+              label="Test headless"
+              onPress={async () => {
+                try {
+                  await GeoPulseNativeModule.simulateHeadless();
+                  append('headless  dispatched -> check "headless-proof" device');
                 } catch (e) {
                   append(`error  ${String(e)}`);
                 }

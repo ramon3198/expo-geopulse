@@ -71,6 +71,9 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
     speed?: number;
     timestamp?: number;
   }): Promise<void>;
+  // testing — directly run the registered headless task (validates the headless
+  // wiring without having to kill the app)
+  simulateHeadless(): Promise<boolean>;
 }
 
 export default requireNativeModule<ExpoGeopulseModule>('ExpoGeopulse');
