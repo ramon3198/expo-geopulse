@@ -61,10 +61,16 @@ jobs:
           unzip -q kotlin.zip
           echo "$PWD/kotlinc/bin" >> "$GITHUB_PATH"
 
-      - name: Pure-logic unit tests (GeoMath)
+      - name: Pure-logic unit tests (GeoMath, SyncPolicy, HeadlessCoalescer, Trips)
         run: |
           kotlinc android/src/main/java/expo/modules/geopulse/util/GeoMath.kt tools/host-test/GeoMathTest.kt -include-runtime -d /tmp/geomath-test.jar
           java -jar /tmp/geomath-test.jar
+          kotlinc android/src/main/java/expo/modules/geopulse/sync/SyncPolicy.kt tools/host-test/SyncPolicyTest.kt -include-runtime -d /tmp/syncpolicy-test.jar
+          java -jar /tmp/syncpolicy-test.jar
+          kotlinc android/src/main/java/expo/modules/geopulse/headless/HeadlessCoalescer.kt tools/host-test/HeadlessCoalescerTest.kt -include-runtime -d /tmp/coalescer-test.jar
+          java -jar /tmp/coalescer-test.jar
+          kotlinc android/src/main/java/expo/modules/geopulse/util/GeoMath.kt android/src/main/java/expo/modules/geopulse/trip/TripVisitManager.kt tools/host-test/TripDistanceTest.kt -include-runtime -d /tmp/trip-test.jar
+          java -jar /tmp/trip-test.jar
 
       - name: ktlint
         run: |
@@ -72,3 +78,23 @@ jobs:
           chmod +x "$RUNNER_TEMP/ktlint"
           cd android/src/main/java
           "$RUNNER_TEMP/ktlint" --editorconfig="$GITHUB_WORKSPACE/.editorconfig" "**/*.kt"
+
+  python:
+    name: Python host tests (sync dedup + buffer cap)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dedup tests (stdlib only)
+        working-directory: server
+        run: python test_db.py
+
+      - name: Buffer cap SQL tests (stdlib only)
+        run: python tools/host-test/buffer_sql_test.py
+
+      - name: Schema migration SQL tests (stdlib only)
+        run: python tools/host-test/migration_sql_test.py

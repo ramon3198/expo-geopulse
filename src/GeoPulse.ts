@@ -20,6 +20,7 @@ import type {
   TripEvent,
   Trip,
   DrivingEvent,
+  SyncErrorEvent,
 } from './ExpoGeopulse.types';
 
 /** Must match `GeoPulseHeadlessService.TASK_KEY` on the native side. */
@@ -47,6 +48,12 @@ import {
  * ```
  */
 class GeoPulse {
+  // ---- auth refresh state (see registerAuthProvider) ----
+  private authProvider?: () => Promise<Record<string, string>>;
+  private authErrorSub?: EventSubscription;
+  private authRefreshing = false;
+  private lastAuthRetryAt = 0;
+
   // ---- lifecycle / tracking ----
 
   /** Apply configuration and prepare the SDK. Call once before {@link start}. */
@@ -179,8 +186,80 @@ class GeoPulse {
     return NativeModule.destroyLocations();
   }
 
+  /**
+   * Upload buffered locations now. If an auth provider is registered
+   * ({@link registerAuthProvider}), credentials are refreshed first so a stale
+   * token never causes the upload to fail.
+   */
   sync(): Promise<Location[]> {
+    if (this.authProvider) {
+      return this.refreshAuth().then(() => NativeModule.sync());
+    }
     return NativeModule.sync();
+  }
+
+  /**
+   * Set the HTTP headers used for sync uploads at runtime (e.g. a bearer token),
+   * layered over the static `headers` from your config. Persisted natively, so
+   * background/headless uploads use them even after the app is killed.
+   *
+   * Prefer {@link registerAuthProvider} if your token expires and needs
+   * automatic refresh.
+   */
+  setAuthHeaders(headers: Record<string, string>): Promise<void> {
+    return NativeModule.setAuthHeaders(headers);
+  }
+
+  /**
+   * Register a function that returns fresh auth headers (e.g. `{ Authorization:
+   * 'Bearer ...' }`). The SDK calls it before each manual {@link sync} and
+   * automatically when a background upload fails with `401` (`AUTH_FAILED`),
+   * pushing the result to native via {@link setAuthHeaders} and re-syncing — so a
+   * dead token is refreshed instead of retried in a loop.
+   *
+   * **Headless note:** when the app is fully killed (no JS runtime and no headless
+   * task), background sync uses the last headers pushed to native; refresh resumes
+   * the next time the app — or its registered headless task — runs. Call this once
+   * at startup. Auto-retry after a `401` is throttled to once per 30s.
+   */
+  registerAuthProvider(provider: () => Promise<Record<string, string>>): void {
+    this.authProvider = provider;
+    this.authErrorSub?.remove();
+    this.authErrorSub = this.onError((e) => {
+      if (e.code === 'AUTH_FAILED') void this.refreshAuthAndSync();
+    });
+    void this.refreshAuth(); // prime native with a token immediately
+  }
+
+  /** Invoke the provider and push the result to native. Resolves true on success. */
+  private async refreshAuth(): Promise<boolean> {
+    if (!this.authProvider || this.authRefreshing) return false;
+    this.authRefreshing = true;
+    try {
+      const headers = await this.authProvider();
+      await this.setAuthHeaders(headers);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.authRefreshing = false;
+    }
+  }
+
+  /** Refresh credentials then re-sync — the 401 recovery path. Throttled. */
+  private async refreshAuthAndSync(): Promise<void> {
+    const now = Date.now();
+    // Bound retries so a permanently-dead token can't spin (each failed upload
+    // re-emits AUTH_FAILED). Native backoff covers the gaps.
+    if (now - this.lastAuthRetryAt < 30_000) return;
+    this.lastAuthRetryAt = now;
+    if (await this.refreshAuth()) {
+      try {
+        await NativeModule.sync();
+      } catch {
+        /* a transient failure will retry on the native backoff schedule */
+      }
+    }
   }
 
   // ---- odometer ----
@@ -278,6 +357,15 @@ class GeoPulse {
     return NativeModule.addListener('onDrivingEvent', listener);
   }
 
+  /**
+   * Fires after a failed sync upload attempt (any non-2xx or network error) with
+   * the `status` and point `count` — observability for the retry/discard policy.
+   * A dropped batch also emits `onError` with code `BATCH_REJECTED`.
+   */
+  onSyncError(listener: (event: SyncErrorEvent) => void): EventSubscription {
+    return NativeModule.addListener('onSyncError', listener);
+  }
+
   // ---- high-level convenience (the "just works" API) ----
 
   /**
@@ -358,6 +446,7 @@ class GeoPulse {
         foreground: false,
         background: false,
         locationServicesEnabled: status.locationServicesEnabled,
+        level: status.level,
         reason: 'foreground_denied',
       };
     }
@@ -371,6 +460,7 @@ class GeoPulse {
           foreground: true,
           background: status.background,
           locationServicesEnabled: false,
+          level: status.level,
           reason: 'location_off',
         };
       }
@@ -386,6 +476,7 @@ class GeoPulse {
       foreground: status.fine || status.coarse,
       background: status.background,
       locationServicesEnabled: status.locationServicesEnabled,
+      level: status.level,
       reason: background && !status.background ? 'background_denied' : undefined,
     };
   }
@@ -415,6 +506,7 @@ class GeoPulse {
   on(event: 'visit', cb: (e: VisitEvent) => void): EventSubscription;
   on(event: 'trip', cb: (e: TripEvent) => void): EventSubscription;
   on(event: 'driving', cb: (e: DrivingEvent) => void): EventSubscription;
+  on(event: 'syncError', cb: (e: SyncErrorEvent) => void): EventSubscription;
   on(event: EventName, cb: (e: never) => void): EventSubscription {
     const map: Record<EventName, string> = {
       location: 'onLocation',
@@ -427,6 +519,7 @@ class GeoPulse {
       visit: 'onVisit',
       trip: 'onTrip',
       driving: 'onDrivingEvent',
+      syncError: 'onSyncError',
     };
     return NativeModule.addListener(map[event] as never, cb as never);
   }
@@ -452,6 +545,25 @@ class GeoPulse {
     timestamp?: number;
   }): Promise<void> {
     return NativeModule.simulateLocation(location);
+  }
+
+  /**
+   * **Debug/testing only.** Force the GMS-free `LocationManager` fallback even
+   * where Play Services is available, to exercise that path from your desk. The
+   * running tracker re-registers on the framework provider (subsequent fixes carry
+   * a raw `provider` like `'gps'`/`'network'`) and an `onProviderChange` fires.
+   */
+  simulateProviderFailure(provider: 'gms' = 'gms'): Promise<void> {
+    return NativeModule.simulateProviderFailure(provider);
+  }
+
+  /**
+   * **Debug/testing only.** Simulate a signal outage lasting `durationMs`: fires
+   * `onProviderChange` with `outage: true` (as the watchdog would after
+   * `outageThreshold`), then `outage: false` when it "recovers".
+   */
+  simulateOutage(durationMs: number): Promise<void> {
+    return NativeModule.simulateOutage(durationMs);
   }
 }
 

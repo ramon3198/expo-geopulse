@@ -56,6 +56,7 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   getCount(): Promise<number>;
   destroyLocations(): Promise<void>;
   sync(): Promise<Location[]>;
+  setAuthHeaders(headers: Record<string, string>): Promise<void>;
 
   // odometer
   getOdometer(): Promise<number>;
@@ -74,6 +75,10 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   // testing — directly run the registered headless task (validates the headless
   // wiring without having to kill the app)
   simulateHeadless(): Promise<boolean>;
+  // testing (debug-only) — force the GMS-free LocationManager fallback (P2-9)
+  simulateProviderFailure(provider: 'gms'): Promise<void>;
+  // testing (debug-only) — simulate a signal outage of `durationMs` (P2-9)
+  simulateOutage(durationMs: number): Promise<void>;
 }
 
 export default requireNativeModule<ExpoGeopulseModule>('ExpoGeopulse');

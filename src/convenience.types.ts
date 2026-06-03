@@ -1,4 +1,4 @@
-import type { Accuracy } from './ExpoGeopulse.types';
+import type { Accuracy, ProviderLevel } from './ExpoGeopulse.types';
 
 /** Friendly tracking presets (strings instead of the `Accuracy` enum). */
 export type TrackMode = 'eco' | 'balanced' | 'high';
@@ -14,7 +14,8 @@ export type EventName =
   | 'error'
   | 'visit'
   | 'trip'
-  | 'driving';
+  | 'driving'
+  | 'syncError';
 
 /** High-level options for `track()` / `ensurePermissions()`. Sensible defaults applied. */
 export interface TrackOptions {
@@ -42,6 +43,8 @@ export interface PermissionResult {
   foreground: boolean;
   background: boolean;
   locationServicesEnabled: boolean;
+  /** Coarse three-level summary: `none` | `foregroundOnly` | `background`. */
+  level: ProviderLevel;
   /** Why it isn't fully granted, if `granted` is false. */
   reason?: 'foreground_denied' | 'location_off' | 'background_denied';
 }

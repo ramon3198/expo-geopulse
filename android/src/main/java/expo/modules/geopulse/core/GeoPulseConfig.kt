@@ -66,6 +66,10 @@ class GeoPulseConfig : Record {
 
   // lifecycle
   @Field var enableHeadless: Boolean = false
+  // Headless coalescing (P1-7): batch onLocation deliveries to the headless task
+  // instead of spawning one ephemeral JS context per fix. 0 = off (one per fix).
+  @Field var headlessCoalesceWindow: Long = 0 // seconds
+  @Field var headlessCoalesceCount: Int = 0 // number of fixes
   @Field var startOnBoot: Boolean = false
 
   // HTTP / persistence
@@ -78,6 +82,17 @@ class GeoPulseConfig : Record {
   @Field var batchSync: Boolean = false
   @Field var maxBatchSize: Int = 250
   @Field var maxRecordsToPersist: Int = 10_000
+
+  // Buffer overflow policy (P0-3): when the buffer reaches maxRecordsToPersist,
+  // "dropOldest" (default, right for route tracking) drops the oldest queued
+  // points; "dropNewest" drops the incoming fix instead.
+  @Field var bufferOverflowPolicy: String = "dropOldest"
+
+  // sync status-code policy overrides (P0-2). Empty = the documented defaults in
+  // SyncPolicy (2xx success / 400,413,422 discard / else retry). A code listed
+  // here overrides that classification for the consumer's backend.
+  @Field var discardStatusCodes: List<Int> = emptyList()
+  @Field var retryStatusCodes: List<Int> = emptyList()
 
   // debug
   @Field var debug: Boolean = false
@@ -145,6 +160,8 @@ class GeoPulseConfig : Record {
     c.enableKalman = enableKalman
     c.accuracyFilter = accuracyFilter
     c.enableHeadless = enableHeadless
+    c.headlessCoalesceWindow = headlessCoalesceWindow
+    c.headlessCoalesceCount = headlessCoalesceCount
     c.startOnBoot = startOnBoot
     c.url = url
     c.httpMethod = httpMethod
@@ -155,6 +172,9 @@ class GeoPulseConfig : Record {
     c.batchSync = batchSync
     c.maxBatchSize = maxBatchSize
     c.maxRecordsToPersist = maxRecordsToPersist
+    c.bufferOverflowPolicy = bufferOverflowPolicy
+    c.discardStatusCodes = discardStatusCodes
+    c.retryStatusCodes = retryStatusCodes
     c.debug = debug
     c.logLevel = logLevel
     c.notification = notification
@@ -185,6 +205,8 @@ class GeoPulseConfig : Record {
       "enableKalman" to enableKalman,
       "accuracyFilter" to accuracyFilter,
       "enableHeadless" to enableHeadless,
+      "headlessCoalesceWindow" to headlessCoalesceWindow,
+      "headlessCoalesceCount" to headlessCoalesceCount,
       "startOnBoot" to startOnBoot,
       "url" to url,
       "httpMethod" to httpMethod,
@@ -195,6 +217,9 @@ class GeoPulseConfig : Record {
       "batchSync" to batchSync,
       "maxBatchSize" to maxBatchSize,
       "maxRecordsToPersist" to maxRecordsToPersist,
+      "bufferOverflowPolicy" to bufferOverflowPolicy,
+      "discardStatusCodes" to discardStatusCodes,
+      "retryStatusCodes" to retryStatusCodes,
       "debug" to debug,
       "logLevel" to logLevel,
       "notification" to notification?.toMap(),
@@ -237,6 +262,8 @@ class GeoPulseConfig : Record {
     (map["enableKalman"] as? Boolean)?.let { enableKalman = it }
     (map["accuracyFilter"] as? Number)?.let { accuracyFilter = it.toDouble() }
     (map["enableHeadless"] as? Boolean)?.let { enableHeadless = it }
+    (map["headlessCoalesceWindow"] as? Number)?.let { headlessCoalesceWindow = it.toLong() }
+    (map["headlessCoalesceCount"] as? Number)?.let { headlessCoalesceCount = it.toInt() }
     (map["startOnBoot"] as? Boolean)?.let { startOnBoot = it }
     (map["url"] as? String)?.let { url = it }
     (map["httpMethod"] as? String)?.let { httpMethod = it }
@@ -249,6 +276,9 @@ class GeoPulseConfig : Record {
     (map["batchSync"] as? Boolean)?.let { batchSync = it }
     (map["maxBatchSize"] as? Number)?.let { maxBatchSize = it.toInt() }
     (map["maxRecordsToPersist"] as? Number)?.let { maxRecordsToPersist = it.toInt() }
+    (map["bufferOverflowPolicy"] as? String)?.let { bufferOverflowPolicy = it }
+    (map["discardStatusCodes"] as? List<*>)?.let { list -> discardStatusCodes = list.mapNotNull { (it as? Number)?.toInt() } }
+    (map["retryStatusCodes"] as? List<*>)?.let { list -> retryStatusCodes = list.mapNotNull { (it as? Number)?.toInt() } }
     (map["debug"] as? Boolean)?.let { debug = it }
     (map["logLevel"] as? Number)?.let { logLevel = it.toInt() }
     return this

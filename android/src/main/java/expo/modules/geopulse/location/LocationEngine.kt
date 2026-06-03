@@ -36,11 +36,14 @@ class LocationEngine(
     fun onLocation(location: Location)
   }
 
-  private val usesGms: Boolean by lazy {
+  private val gmsAvailable: Boolean by lazy {
     runCatching {
       GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
     }.getOrDefault(false)
   }
+
+  // Re-evaluated on each start so the P2-9 debug toggle takes effect on a relaunch.
+  private fun usesGms(): Boolean = !forceRawProvider && gmsAvailable
 
   private var fusedClient: FusedLocationProviderClient? = null
   private var fusedCallback: LocationCallback? = null
@@ -61,7 +64,7 @@ class LocationEngine(
     val thread = HandlerThread("geopulse-location").also { it.start() }
     handlerThread = thread
     val looper = thread.looper
-    if (usesGms) startFused(config, listener, looper) else startRaw(config, listener, looper)
+    if (usesGms()) startFused(config, listener, looper) else startRaw(config, listener, looper)
   }
 
   @SuppressLint("MissingPermission")
@@ -136,7 +139,7 @@ class LocationEngine(
       onResult(null)
       return
     }
-    if (usesGms) {
+    if (usesGms()) {
       val client = LocationServices.getFusedLocationProviderClient(context)
       val request =
         CurrentLocationRequest
@@ -164,4 +167,13 @@ class LocationEngine(
       GeoPulseConfig.Accuracy.PASSIVE -> Priority.PRIORITY_PASSIVE
       else -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
     }
+
+  companion object {
+    /**
+     * Debug hook (P2-9): when true, [start] / [getCurrentLocation] use the
+     * framework `LocationManager` even where Play Services is available, to
+     * exercise the GMS-free fallback path from the desktop.
+     */
+    @Volatile var forceRawProvider = false
+  }
 }

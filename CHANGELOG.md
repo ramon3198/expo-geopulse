@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.6.0
+
+### New features
+
+- **Documented HTTP sync contract + status-code policy.** Sync now classifies each
+  response: `2xx` deletes the batch; `400/413/422` (and any `discardStatusCodes`)
+  **discard** it and emit `onError` `BATCH_REJECTED`; everything else
+  (`401/403/408/429/5xx`, network errors, and any `retryStatusCodes`) **retries**
+  with backoff. `Retry-After` on `429`/`503` is honored. A new **`onSyncError`**
+  event reports `{ status, count }` for every failed attempt.
+- **Runtime auth headers + refresh.** `GeoPulse.setAuthHeaders(headers)` and
+  `GeoPulse.registerAuthProvider(() => Promise<headers>)` keep uploads
+  authenticated: a `401` emits `AUTH_FAILED` and — when the app is alive — the SDK
+  refreshes the token and re-syncs once (throttled) before backoff. Headers are
+  persisted natively, so background/headless sync uses the last token even after
+  the app is killed.
+- **Buffer overflow policy.** When the buffer reaches `maxRecordsToPersist` (the
+  sync cap, default 10000) a new `bufferOverflowPolicy` controls what gives:
+  `dropOldest` (default, right for route tracking) or `dropNewest`. Either way an
+  `onError` `BUFFER_OVERFLOW` fires with the `dropped` count (coalesced so a full
+  buffer can't spam one event per fix). Uploads stay paginated to `maxBatchSize`
+  per request, so a 10k backlog never becomes one giant payload.
+- **Partial (foreground-only) location permission is a first-class state.**
+  `getProviderState()` / `ensurePermissions()` now report a coarse `level`
+  (`none` | `foregroundOnly` | `background`). Starting with `foregroundOnly` keeps
+  tracking while the app is visible and emits `onError`
+  `BACKGROUND_PERMISSION_MISSING` instead of silently assuming background — the
+  consumer can continue degraded or guide the user to "Allow all the time".
+- **Headless event coalescing.** With `enableHeadless`, `headlessCoalesceWindow`
+  (seconds) and/or `headlessCoalesceCount` (fixes) batch `onLocation` deliveries to
+  the headless task — the handler receives a `Location[]` once per window/count
+  instead of spawning an ephemeral JS context per fix (battery saver on a highway
+  with a low `distanceFilter`). Off by default; the SQLite sync pipeline still
+  stores every fix individually. Batching logic is host-tested
+  (`tools/host-test/HeadlessCoalescerTest.kt`).
+- **Debug testing hooks.** `simulateProviderFailure('gms')` forces the GMS-free
+  `LocationManager` fallback (so you can exercise it without a GMS-free device),
+  and `simulateOutage(durationMs)` fires the `onProviderChange` outage/recovery
+  events the signal-loss watchdog would. Both are debug-only aids documented in the
+  Testing section.
+
+### Fixes
+
+- **Kalman filter resets when leaving a stationary stop.** With `stopOnStationary`,
+  GPS is off while the device is still; on resume the first fix could sit far from
+  the filter's stale pre-stop position and be smoothed against it (or rejected by
+  the speed-outlier gate). The filter is now reset on the stationary→moving
+  transition, so the first post-resume fix seeds a fresh state and is accepted
+  cleanly — no false jump or gap. Covered by a new fusion host test.
+- **Trip distance ignores stationary GPS gaps.** `Trip.distanceMeters` no longer
+  adds the straight-line jump across a `stopOnStationary` stop (the first
+  post-resume fix starts a fresh segment), so routes with long stops aren't
+  over-counted. Documented how `distanceMeters` is computed; covered by a new
+  `TripVisitManager` host test.
+
+### Docs
+
+- **Documented the idempotent-sync contract and the full HTTP contract** (body
+  format, headers, status-code → action table, auth) for custom backends in the
+  README. Every uploaded location carries a stable `uuid` (UUID v4, generated
+  on-device at capture time) that is identical across retries, so a backend can
+  dedup a re-sent batch (e.g. after a lost `2xx`) and never store duplicate points.
+
+### Internal / quality
+
+- **Companion server dedups via `UNIQUE(device, uuid)` + `ON CONFLICT DO NOTHING`**
+  instead of a select-then-insert check — one statement, no race, and it models
+  the contract above. `init_db` upgrades the old non-unique index in place
+  (de-duping any pre-existing rows first; NULL-uuid rows are kept).
+- **Sync logic centralized in `SyncEngine` / `SyncPolicy`** so the manual `sync()`
+  and the WorkManager worker apply the exact same policy. `SyncPolicy` is pure and
+  host-tested (`tools/host-test/SyncPolicyTest.kt`) alongside `GeoMath`.
+- **Data-preserving SQLite migrations.** The buffer DB now versions its schema via
+  `PRAGMA user_version` and runs incremental, **non-destructive** migrations on
+  open (previously a version bump dropped the table, losing un-synced points). A
+  failed migration rolls back instead of wiping and emits `onError`
+  `DB_MIGRATION_FAILED`. Schema **v2** makes the local buffer idempotent on `uuid`
+  (UNIQUE index + `INSERT OR IGNORE`, mirroring the server — the deferred half of
+  the idempotency work). Migration logic is host-tested
+  (`tools/host-test/migration_sql_test.py`), including the rollback-keeps-data path.
+- **New `server` CI job** runs stdlib-only idempotency tests (`server/test_db.py`)
+  for the dedup behavior, gating releases like the existing C++/Kotlin host tests.
+
 ## 0.5.1
 
 ### Fixes

@@ -22,8 +22,24 @@ class ConfigStore(
     return runCatching { Json.toMap(raw) }.getOrNull()
   }
 
+  /**
+   * Auth headers are persisted separately from the config: JS refreshes them at
+   * runtime (`setAuthHeaders`) and the headless sync worker must read the latest
+   * token even when started in a fresh process with no JS runtime.
+   */
+  fun saveAuthHeaders(headers: Map<String, String>) {
+    prefs.edit().putString(KEY_AUTH_HEADERS, Json.toJson(headers)).apply()
+  }
+
+  fun loadAuthHeaders(): Map<String, String> {
+    val raw = prefs.getString(KEY_AUTH_HEADERS, null) ?: return emptyMap()
+    val map = runCatching { Json.toMap(raw) }.getOrNull() ?: return emptyMap()
+    return map.entries.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
+  }
+
   companion object {
     private const val PREFS_NAME = "geopulse_prefs"
     private const val KEY_CONFIG = "config"
+    private const val KEY_AUTH_HEADERS = "auth_headers"
   }
 }

@@ -39,6 +39,7 @@ class ExpoGeopulseModule : Module() {
         "onVisit",
         "onTrip",
         "onDrivingEvent",
+        "onSyncError",
       )
 
       OnCreate {
@@ -273,6 +274,13 @@ class ExpoGeopulseModule : Module() {
         }
       }
 
+      // Replace the runtime auth headers (e.g. a refreshed token). Persisted and
+      // layered over config.headers on every upload, including headless sync.
+      AsyncFunction("setAuthHeaders") { headers: Map<String, String>, promise: Promise ->
+        controller.setAuthHeaders(headers)
+        promise.resolve(null)
+      }
+
       // ---- odometer ----
 
       AsyncFunction("getOdometer") { promise: Promise ->
@@ -324,6 +332,18 @@ class ExpoGeopulseModule : Module() {
           )
         GeoPulseHeadlessService.dispatch(ctx, "onLocation", Json.toJson(loc))
         promise.resolve(true)
+      }
+
+      // testing (debug-only, P2-9) — force the GMS-free LocationManager fallback.
+      AsyncFunction("simulateProviderFailure") { provider: String, promise: Promise ->
+        controller.simulateProviderFailure(provider)
+        promise.resolve(null)
+      }
+
+      // testing (debug-only, P2-9) — simulate a signal outage of `durationMs`.
+      AsyncFunction("simulateOutage") { durationMs: Double, promise: Promise ->
+        controller.simulateOutage(durationMs.toLong())
+        promise.resolve(null)
       }
     }
 }

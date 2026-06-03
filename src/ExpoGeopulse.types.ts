@@ -138,6 +138,16 @@ export interface GeoPulseConfig {
    * natively); only the JS callbacks require this.
    */
   enableHeadless?: boolean;
+  /**
+   * Coalesce headless `onLocation` deliveries (with `enableHeadless`): batch fixes
+   * and deliver them to the headless task as a `Location[]` once this many seconds
+   * have passed since the first buffered fix. `0` (default) = off (one event per
+   * fix). Avoids spawning an ephemeral JS context per fix on, e.g., a highway. The
+   * SQLite sync pipeline is unaffected — it still stores every fix individually.
+   */
+  headlessCoalesceWindow?: number;
+  /** Coalesce headless `onLocation` after this many fixes. `0` (default) = off. */
+  headlessCoalesceCount?: number;
   startOnBoot?: boolean;
 
   // --- HTTP / persistence (M5) ---
@@ -159,7 +169,28 @@ export interface GeoPulseConfig {
    */
   batchSync?: boolean;
   maxBatchSize?: number;
+  /** Max points kept in the local buffer (the sync cap). Default 10000. */
   maxRecordsToPersist?: number;
+  /**
+   * What to do when the buffer reaches `maxRecordsToPersist`: `'dropOldest'`
+   * (default — right for route tracking) drops the oldest queued points;
+   * `'dropNewest'` drops the incoming fix. Either way an `onError`
+   * (`BUFFER_OVERFLOW`, with a `dropped` count) fires.
+   */
+  bufferOverflowPolicy?: 'dropOldest' | 'dropNewest';
+  /**
+   * HTTP status codes that should make sync **drop** the batch (in addition to
+   * the defaults `400`, `413`, `422`). Use for backend-specific permanent errors.
+   * A re-tryable code (see {@link retryStatusCodes}) always wins, so you never
+   * accidentally discard data.
+   */
+  discardStatusCodes?: number[];
+  /**
+   * HTTP status codes that should make sync **retry** the batch with backoff,
+   * overriding the defaults (e.g. force-retry a `400` your backend returns for a
+   * transient reason). Takes precedence over {@link discardStatusCodes}.
+   */
+  retryStatusCodes?: number[];
 
   // --- debug ---
   debug?: boolean;
@@ -328,9 +359,41 @@ export interface DrivingEvent {
   location: Location | null;
 }
 
+/** Emitted on `onSyncError` after a failed upload attempt (any non-2xx or network error). */
+export interface SyncErrorEvent {
+  /** HTTP status (0 = network error / no response). */
+  status: number;
+  /** Number of points in the affected batch. */
+  count: number;
+}
+
 export interface GeoPulseError {
+  /**
+   * Machine-readable code. Sync/buffer-related codes:
+   * - `BATCH_REJECTED` — a batch was permanently rejected (`400/413/422`, or a
+   *   `discardStatusCodes` match) and dropped from the buffer; includes `status` + `count`.
+   * - `AUTH_FAILED` — a `401`; refresh credentials (see {@link GeoPulse.registerAuthProvider}).
+   * - `BUFFER_OVERFLOW` — the buffer hit `maxRecordsToPersist`; includes `dropped` + `policy`.
+   * - `DB_MIGRATION_FAILED` — a schema migration failed and was rolled back (data
+   *   preserved, not wiped); includes `fromVersion` + `toVersion`.
+   * - `BACKGROUND_PERMISSION_MISSING` — tracking started with foreground-only
+   *   location; it will pause when the app is backgrounded until "Allow all the
+   *   time" is granted.
+   */
   code: string;
   message: string;
+  /** HTTP status, present for sync errors (`BATCH_REJECTED`, `AUTH_FAILED`). */
+  status?: number;
+  /** Points dropped, present for `BATCH_REJECTED`. */
+  count?: number;
+  /** Points dropped, present for `BUFFER_OVERFLOW`. */
+  dropped?: number;
+  /** Overflow policy that ran, present for `BUFFER_OVERFLOW`. */
+  policy?: 'dropOldest' | 'dropNewest';
+  /** Schema version migrated from, present for `DB_MIGRATION_FAILED`. */
+  fromVersion?: number;
+  /** Schema version migrated to, present for `DB_MIGRATION_FAILED`. */
+  toVersion?: number;
 }
 
 export interface GeoPulseState {
@@ -360,6 +423,15 @@ export enum AuthorizationStatus {
   Always = 3,
 }
 
+/**
+ * Coarse three-level location-permission state (Android 11+):
+ * - `none` — no location permission.
+ * - `foregroundOnly` — "While using the app"; tracking works only while the app is
+ *   visible (a background upload/track will pause when backgrounded).
+ * - `background` — "Allow all the time"; full background tracking.
+ */
+export type ProviderLevel = 'none' | 'foregroundOnly' | 'background';
+
 export interface PermissionStatus {
   fine: boolean;
   coarse: boolean;
@@ -369,6 +441,8 @@ export interface PermissionStatus {
   /** Whether device location services (GPS/network) are turned on. */
   locationServicesEnabled: boolean;
   status: AuthorizationStatus;
+  /** Coarse three-level summary of the location grant. */
+  level: ProviderLevel;
 }
 
 /** Strongly-typed event map consumed by `NativeModule<...>`. */
@@ -384,6 +458,8 @@ export type GeoPulseEvents = {
   onVisit: (event: VisitEvent) => void;
   onTrip: (event: TripEvent) => void;
   onDrivingEvent: (event: DrivingEvent) => void;
+  /** Fires after a failed sync upload attempt (any non-2xx or network error). */
+  onSyncError: (event: SyncErrorEvent) => void;
 };
 
 /**
@@ -396,7 +472,9 @@ export interface HeadlessEvent {
   /**
    * The event's payload — the same object the matching `on(...)` callback would
    * receive (a `Location` for `'onLocation'`, a `GeofenceEvent` for `'onGeofence'`,
-   * etc.). Narrow it by `event`.
+   * etc.). Narrow it by `event`. When headless coalescing is enabled
+   * (`headlessCoalesceWindow` / `headlessCoalesceCount`), `'onLocation'` delivers a
+   * batch — `data` is a `Location[]` instead of a single `Location`.
    */
   data: unknown;
 }

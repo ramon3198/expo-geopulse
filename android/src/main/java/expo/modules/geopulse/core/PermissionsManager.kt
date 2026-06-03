@@ -118,6 +118,22 @@ object PermissionsManager {
       "activityRecognition" to activity,
       "locationServicesEnabled" to isLocationEnabled(ctx),
       "status" to status,
+      "level" to level(fine || coarse, background),
     )
   }
+
+  /**
+   * Coarse three-level location-permission state (P1-6): `none` (no location),
+   * `foregroundOnly` ("While using the app" — tracking works only while visible),
+   * or `background` ("Allow all the time").
+   */
+  fun level(
+    foreground: Boolean,
+    background: Boolean,
+  ): String =
+    when {
+      foreground && background -> "background"
+      foreground -> "foregroundOnly"
+      else -> "none"
+    }
 }

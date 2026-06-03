@@ -1,6 +1,6 @@
 package expo.modules.geopulse.trip
 
-import expo.modules.geopulse.geofence.GeofenceManager.Companion.haversineMeters
+import expo.modules.geopulse.util.GeoMath.haversineMeters
 import java.util.UUID
 
 /**
@@ -105,6 +105,17 @@ class TripVisitManager(
     clusterCount = 0
     currentVisit = null
     currentTrip = null
+    hasLast = false
+  }
+
+  /**
+   * Mark a gap in the fix stream (P2-8): the next fix becomes a fresh reference,
+   * so its straight-line distance from the last pre-gap point is NOT added to the
+   * trip. Called when leaving a stationary stop that turned GPS off — otherwise a
+   * long stop would inflate `distanceMeters` by the as-the-crow-flies jump on
+   * resume. The in-progress trip and visit state are untouched.
+   */
+  fun markGap() {
     hasLast = false
   }
 

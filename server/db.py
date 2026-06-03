@@ -7,13 +7,16 @@ SDK emitted plus a few indexed columns for querying.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).parent / "geopulse.db"
+# Defaults to a file next to this module; override with GEOPULSE_DB (used by the
+# idempotency tests to point at a throwaway database).
+DB_PATH = Path(os.environ.get("GEOPULSE_DB", str(Path(__file__).parent / "geopulse.db")))
 
 # A single connection guarded by a lock keeps this dependency-free and safe for
 # the modest write rate of a tracking demo.
@@ -42,7 +45,6 @@ def init_db() -> None:
                 json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_loc_device ON locations(device, id);
-            CREATE INDEX IF NOT EXISTS idx_loc_device_uuid ON locations(device, uuid);
 
             CREATE TABLE IF NOT EXISTS trips (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +76,23 @@ def init_db() -> None:
                 received_at INTEGER,
                 json TEXT NOT NULL
             );
+
+            -- Idempotency: a re-sent batch (e.g. after a lost 2xx response makes
+            -- the SDK retry an upload) must not duplicate points. Dedup by
+            -- (device, uuid) with a UNIQUE index; insert_location relies on it
+            -- via ON CONFLICT. De-dupe any pre-existing rows before adding the
+            -- constraint (NULL uuids are kept — SQLite treats them as distinct),
+            -- and upgrade the old non-unique index of the same name if present.
+            DELETE FROM locations
+             WHERE uuid IS NOT NULL
+               AND id NOT IN (
+                 SELECT MIN(id) FROM locations
+                  WHERE uuid IS NOT NULL
+                  GROUP BY device, uuid
+               );
+            DROP INDEX IF EXISTS idx_loc_device_uuid;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_loc_device_uuid
+                ON locations(device, uuid);
             """
         )
         _conn.commit()
@@ -86,29 +105,23 @@ def _now_ms() -> int:
 def insert_location(device: str, loc: dict[str, Any]) -> bool:
     """Insert a location, idempotent by (device, uuid).
 
-    Returns True if a new row was inserted, False if it was a duplicate (so the
-    SDK can safely retry an upload — e.g. after a slow response trips its read
-    timeout — without duplicating points). The existence check + insert run under
-    the same lock, so concurrent requests can't both insert the same uuid.
+    Returns True if a new row was inserted, False if it was a duplicate. The
+    UNIQUE(device, uuid) index makes a re-sent batch a no-op via ON CONFLICT, so
+    the SDK can safely retry an upload — e.g. after a slow response trips its read
+    timeout — without duplicating points. Rows with a NULL uuid are always
+    inserted (SQLite treats NULLs as distinct, so they can't be deduped).
     """
     coords = loc.get("coords") or {}
-    uuid = loc.get("uuid")
     with _lock:
-        if uuid is not None:
-            existing = _conn.execute(
-                "SELECT 1 FROM locations WHERE device = ? AND uuid = ? LIMIT 1",
-                (device, uuid),
-            ).fetchone()
-            if existing is not None:
-                return False
-        _conn.execute(
+        cur = _conn.execute(
             """INSERT INTO locations
                (device, uuid, timestamp, latitude, longitude, accuracy, speed,
                 provider, is_moving, confidence, received_at, json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(device, uuid) DO NOTHING""",
             (
                 device,
-                uuid,
+                loc.get("uuid"),
                 loc.get("timestamp"),
                 coords.get("latitude"),
                 coords.get("longitude"),
@@ -122,7 +135,7 @@ def insert_location(device: str, loc: dict[str, Any]) -> bool:
             ),
         )
         _conn.commit()
-        return True
+        return cur.rowcount > 0
 
 
 def insert_trip(device: str, event: dict[str, Any]) -> None:

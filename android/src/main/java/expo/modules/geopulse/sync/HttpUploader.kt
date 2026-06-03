@@ -11,6 +11,8 @@ object HttpUploader {
     val success: Boolean,
     val status: Int,
     val body: String?,
+    /** Parsed `Retry-After` delta-seconds (429/503), or null if absent/non-numeric. */
+    val retryAfterSeconds: Long? = null,
   )
 
   // Below this size gzip's ~20-byte header/overhead isn't worth it; above it, a
@@ -45,7 +47,8 @@ object HttpUploader {
       val success = code in 200..299
       val stream = if (success) connection.inputStream else connection.errorStream
       val responseBody = stream?.bufferedReader()?.use { it.readText() }
-      Result(success, code, responseBody)
+      val retryAfter = SyncPolicy.parseRetryAfterSeconds(connection.getHeaderField("Retry-After"))
+      Result(success, code, responseBody, retryAfter)
     } catch (t: Throwable) {
       Result(false, 0, t.message)
     } finally {

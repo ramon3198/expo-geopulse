@@ -10,10 +10,12 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import expo.modules.geopulse.core.GeoPulseController
 import expo.modules.geopulse.db.LocationStore
+import java.util.concurrent.TimeUnit
 
 /**
- * Uploads buffered locations to the configured endpoint in batches, deleting them
- * only on a successful (2xx) response. WorkManager handles retry/backoff and
+ * Uploads buffered locations to the configured endpoint in batches via
+ * [SyncEngine], which applies the documented status-code policy (2xx delete /
+ * 400,413,422 discard / else retry). WorkManager handles retry/backoff and
  * network constraints, so data survives offline periods and app restarts.
  */
 class SyncWorker(
@@ -43,6 +45,8 @@ class SyncWorker(
       } else {
         if (config.maxBatchSize > 0) config.maxBatchSize else 250
       }
+    val discard = config.discardStatusCodes.toSet()
+    val retry = config.retryStatusCodes.toSet()
 
     // Serialize the whole drain with the manual sync() path so they can't claim
     // and upload the same rows twice.
@@ -53,30 +57,36 @@ class SyncWorker(
         val batch = store.getAll(batchSize)
         if (batch.isEmpty()) return Result.success()
 
-        val body = HttpUploader.buildBody(batch.map { it.json }, config.params)
-        val result = HttpUploader.upload(url, config.httpMethod, config.headers, body)
-        if (!result.success) {
-          return if (isTransient(result.status)) {
-            // Network error / 5xx / 408 / 429: back off and retry the same batch.
-            Result.retry()
-          } else {
-            // Permanent client error (400/401/403/413/422/...). Retrying the same
-            // body would spin on backoff forever and wedge the whole pipeline, so
-            // surface it and stop; the batch stays buffered for the next trigger
-            // (or until the app fixes the cause, e.g. refreshes an expired token).
-            GeoPulseController.emit(
-              "onError",
-              mapOf(
-                "code" to "HTTP_ERROR",
-                "message" to "Sync rejected with HTTP ${result.status}",
-                "status" to result.status,
-              ),
-            )
-            Result.success()
+        // Re-read effective headers per batch so a JS token refresh (setAuthHeaders)
+        // triggered by a 401 mid-drain is picked up on the very next batch.
+        val outcome =
+          SyncEngine.uploadBatch(
+            store,
+            url,
+            config.httpMethod,
+            GeoPulseController.effectiveHeaders(config),
+            config.params,
+            batch,
+            discard,
+            retry,
+          )
+        when (outcome) {
+          is SyncEngine.Outcome.Success -> Unit // keep draining
+          is SyncEngine.Outcome.Discarded -> Unit // batch dropped; keep draining
+          is SyncEngine.Outcome.Retry -> {
+            val delay = outcome.delaySeconds
+            return if (delay != null) {
+              // Respect Retry-After precisely: schedule a delayed continuation and
+              // report success so WorkManager's own backoff doesn't also kick in.
+              scheduleContinuation(applicationContext, delay)
+              Result.success()
+            } else {
+              // Network error / 5xx / 408 / 429 (no Retry-After) / recoverable auth:
+              // back off and retry the same batch.
+              Result.retry()
+            }
           }
         }
-
-        store.deleteByIds(batch.map { it.id })
       }
     }
     // Hit the per-run cap with rows still pending but no upload error: this is
@@ -84,25 +94,29 @@ class SyncWorker(
     // a fresh continuation (attempt count resets -> no backoff) that runs as soon
     // as this one completes, and report success.
     if (store.count() > 0) {
-      runCatching {
-        val next =
-          OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(
-              Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
-            ).build()
-        WorkManager
-          .getInstance(applicationContext)
-          .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, next)
-      }
+      runCatching { scheduleContinuation(applicationContext, 0) }
     }
     return Result.success()
   }
 
-  /** Transient = worth retrying with backoff: network error, 5xx, 408, 429. */
-  private fun isTransient(status: Int): Boolean = status == 0 || status == 408 || status == 429 || status in 500..599
-
   companion object {
     const val UNIQUE_WORK_NAME = "geopulse-sync"
     private const val MAX_BATCHES_PER_RUN = 50
+
+    /** Enqueue another drain, optionally after [delaySeconds] (Retry-After). */
+    private fun scheduleContinuation(
+      context: Context,
+      delaySeconds: Long,
+    ) {
+      val builder =
+        OneTimeWorkRequestBuilder<SyncWorker>()
+          .setConstraints(
+            Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
+          )
+      if (delaySeconds > 0) builder.setInitialDelay(delaySeconds, TimeUnit.SECONDS)
+      WorkManager
+        .getInstance(context)
+        .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, builder.build())
+    }
   }
 }

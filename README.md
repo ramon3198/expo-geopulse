@@ -203,8 +203,26 @@ The "just works" layer — most apps only need these:
 ### Permissions & battery
 - `requestPermissions(): Promise<PermissionStatus>`
 - `getProviderState(): Promise<PermissionStatus>`
+- `requestBackgroundPermission(): Promise<PermissionStatus>` · `openAppSettings(): Promise<void>`
 - `isIgnoringBatteryOptimizations(): Promise<boolean>`
 - `requestIgnoreBatteryOptimizations(): Promise<boolean>`
+
+**Android 11+ partial permission.** The OS lets users grant "While using the app"
+but deny "Allow all the time", and background location can usually only be upgraded
+from Settings (not a dialog). `getProviderState()` and `ensurePermissions()` report a
+coarse `level`: **`none`** · **`foregroundOnly`** · **`background`**.
+
+With `foregroundOnly`, tracking still works **while the app is visible** but pauses
+when backgrounded — `start()` emits `onError` `BACKGROUND_PERMISSION_MISSING` (the SDK
+never crashes or assumes background). Decide whether to continue degraded or guide the
+user to upgrade via `requestBackgroundPermission()` → `openAppSettings()`:
+
+```ts
+const p = await GeoPulse.ensurePermissions({ background: true });
+if (p.level === 'foregroundOnly') {
+  // keep tracking in-app, or: await GeoPulse.openAppSettings();
+}
+```
 
 ### Geofences
 - `addGeofence(geofence)` · `addGeofences(list)` · `removeGeofence(id)` · `removeGeofences()` · `getGeofences()`
@@ -213,6 +231,7 @@ The "just works" layer — most apps only need these:
 ### Trips & visits
 - Enable with `enableTripDetection: true` (tune via `visitRadius`, `minVisitDwell`).
 - `getActiveTrip(): Promise<Trip | null>` — the trip currently in progress.
+- `Trip.distanceMeters` is the sum of **real travelled segments** between consecutive fixes (great-circle, post-Kalman) — not the straight-line start→end. It does **not** interpolate across a stationary-caused GPS gap: when `stopOnStationary` turns GPS off for a stop, the as-the-crow-flies jump on resume is excluded, so a route with long stops isn't over-counted. Jitter accumulated while parked at a confirmed visit is rolled back too.
 - Subscribe with `onVisit` (`{ action: 'arrive' | 'depart', visit }`) and `onTrip` (`{ action: 'start' | 'end', trip }`).
 
 ### Driving events
@@ -224,12 +243,14 @@ The "just works" layer — most apps only need these:
 
 ### Testing
 - `simulateLocation({ latitude, longitude, accuracy?, speed?, timestamp? })` — inject a fix through the full pipeline (fusion, geofences, trips/visits) to test from your desk without walking a route. Pass increasing `timestamp` values to simulate motion.
+- `simulateProviderFailure('gms')` *(debug-only)* — force the GMS-free `LocationManager` fallback even where Play Services exists, to exercise that path; fires `onProviderChange` and subsequent fixes carry a raw `provider`.
+- `simulateOutage(durationMs)` *(debug-only)* — simulate a signal loss: fires `onProviderChange` with `outage: true` after `outageThreshold`, then `outage: false` when it recovers.
 
 ### Events (each returns an `EventSubscription`)
-`onLocation` · `onMotionChange` · `onActivityChange` · `onGeofence` · `onProviderChange` · `onHeartbeat` · `onError` · `onVisit` · `onTrip` · `onDrivingEvent`
+`onLocation` · `onMotionChange` · `onActivityChange` · `onGeofence` · `onProviderChange` · `onHeartbeat` · `onError` · `onVisit` · `onTrip` · `onDrivingEvent` · `onSyncError`
 
 ### Config highlights
-`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `preset` (`eco|standard|high`) · `lowBatteryThreshold` · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `disableMockLocations` · `outageThreshold` · `enableTripDetection` / `visitRadius` / `minVisitDwell` · `enableKalman` · `accuracyFilter` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` · `notification`.
+`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `preset` (`eco|standard|high`) · `lowBatteryThreshold` · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `disableMockLocations` · `outageThreshold` · `enableTripDetection` / `visitRadius` / `minVisitDwell` · `enableKalman` · `accuracyFilter` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` / `maxRecordsToPersist` / `bufferOverflowPolicy` / `discardStatusCodes` / `retryStatusCodes` · `notification`.
 
 ---
 
@@ -238,8 +259,8 @@ The "just works" layer — most apps only need these:
 - **Foreground service** keeps tracking alive in the background and posts the required ongoing notification.
 - **LocationEngine** prefers `FusedLocationProviderClient`; on GMS-free devices it falls back to `LocationManager`.
 - **Kalman fusion (C++/NDK)** runs every fix through `libgeopulse-fusion.so`: accuracy gating, speed-based outlier rejection, and a scalar GPS Kalman filter. Emitted locations carry `filtered: true` and `provider: "kalman"`.
-- **MotionManager** uses Activity Recognition transitions + the significant-motion sensor; when `stopOnStationary` is on, GPS is stopped while still and resumed on movement.
-- **Offline pipeline**: every location is buffered in SQLite; a WorkManager job uploads batches to `url` with retry/backoff and deletes them on success.
+- **MotionManager** uses Activity Recognition transitions + the significant-motion sensor; when `stopOnStationary` is on, GPS is stopped while still and resumed on movement. On that resume the Kalman filter is **reset**, so the first fix after a long stop seeds a fresh state instead of being smoothed against — or rejected as an outlier relative to — the pre-stop position.
+- **Offline pipeline**: every location is buffered in SQLite; a WorkManager job uploads batches to `url` with retry/backoff and deletes them on success. Each fix carries a stable `uuid`, so retries are [idempotent](#writing-your-own-backend) — a lost response can't pile up duplicates on the server. The buffer is capped at `maxRecordsToPersist` (default 10000); on overflow it drops per `bufferOverflowPolicy` (`dropOldest` by default) and emits `onError` `BUFFER_OVERFLOW`. Uploads are paginated to `maxBatchSize` points per request (unless `batchSync` sends the whole backlog at once).
 - **Boot**: the last config is persisted; if `startOnBoot` is set, tracking resumes after a reboot without opening the app.
 
 ---
@@ -268,6 +289,65 @@ cd server && python simulate.py        # watch the map move
 # await GeoPulse.ready({ url: 'http://YOUR_PC_IP:8787/locations', autoSync: true })
 ```
 
+### Writing your own backend
+
+If you point `url` at your own server, it **must be idempotent**. The SDK buffers
+every fix and retries uploads that aren't confirmed, so when a `2xx` response is
+lost (network drop, read timeout) the same batch is re-sent and the backend sees
+the same points twice.
+
+Every location carries a stable **`uuid`** (UUID v4) generated *on-device at
+capture time* — it is identical across retries. Treat it as an idempotency key and
+**dedup / upsert by `uuid`** (it is globally unique) so a re-sent point is stored
+only once:
+
+```sql
+-- e.g. SQLite — the companion server/ scopes the key per device
+CREATE UNIQUE INDEX idx_loc ON locations(device, uuid);
+INSERT INTO locations (...) VALUES (...) ON CONFLICT(device, uuid) DO NOTHING;
+```
+
+Attach a device id and any auth via `headers` / `params` (the companion server
+reads an `X-Device-Id` header, defaulting to `"default"`). The request body
+(`POST` or `PUT`, gzipped above ~256 bytes with `Content-Encoding: gzip`) is:
+
+- without `params`: a bare array — `[{ "uuid": "…", "timestamp": 1700000000000, "coords": { … }, … }, …]`
+- with `params` set: `{ "locations": [ … ], …params }`
+
+Respond `2xx` only after the batch is durably stored. The SDK then deletes its
+local copy; on any other status it follows this policy:
+
+| Status | Action | Why |
+| --- | --- | --- |
+| `2xx` | **delete** the batch | stored successfully |
+| `400`, `413`, `422` | **discard** the batch + emit `onError` `BATCH_REJECTED` | the batch is malformed/too-large; retrying the same body loops forever |
+| `401` | **retry** + emit `onError` `AUTH_FAILED` | token likely expired — refresh it (see below) |
+| `403`, `408`, `429`, `5xx`, network error | **retry** with backoff | transient / recoverable |
+| anything else | **retry** with backoff | never drop data unless the batch is at fault |
+
+`Retry-After` (seconds) on a `429`/`503` is honored — the next attempt is delayed
+by exactly that long instead of the default exponential backoff. Override the
+classification per status with `discardStatusCodes` / `retryStatusCodes` in your
+config, and observe every failed attempt via the `onSyncError` event
+(`{ status, count }`).
+
+#### Auth tokens
+
+For a static token, put it in `headers`. For a token that **expires**, register a
+provider so uploads always use a live one — including background/headless syncs:
+
+```ts
+GeoPulse.registerAuthProvider(async () => ({
+  Authorization: `Bearer ${await getFreshToken()}`,
+}));
+```
+
+The SDK calls it before each manual `sync()`, and automatically after a `401`
+(`AUTH_FAILED`) — refreshing and re-syncing once (throttled) before backoff. The
+headers are persisted natively, so when the app is killed background sync keeps
+using the last token; refresh resumes when the app or its headless task next runs.
+You can also push headers imperatively with `GeoPulse.setAuthHeaders({ ... })`.
+
 ---
 
 ## Headless JS task
@@ -291,6 +371,28 @@ GeoPulse.registerHeadlessTask(async ({ event, data }) => {
 Without it, the *data pipeline* (buffer + HTTP sync via the foreground service)
 is still headless-safe on its own — locations are recorded and uploaded to your
 `url` even when the app is killed; only custom JS callbacks need the headless task.
+
+### Coalescing (batch delivery)
+
+With a low `distanceFilter`, a moving device can fire `onLocation` every second —
+and each one spawns a fresh JS context, which is costly. Set
+`headlessCoalesceWindow` (seconds) and/or `headlessCoalesceCount` (number of fixes)
+to batch them: the task is invoked once per window/count with **`data` as a
+`Location[]`** instead of a single `Location`.
+
+```ts
+await GeoPulse.ready({ enableHeadless: true, headlessCoalesceWindow: 30 });
+
+GeoPulse.registerHeadlessTask(async ({ event, data }) => {
+  if (event === 'onLocation') {
+    const points = Array.isArray(data) ? data : [data]; // batched when coalescing
+    await fetch('https://api.example.com/loc', { method: 'POST', body: JSON.stringify(points) });
+  }
+});
+```
+
+Coalescing is **only** for headless JS delivery — the SQLite buffer still stores
+(and HTTP-syncs) every fix individually. Off by default (one event per fix).
 
 ## Limitations
 

@@ -153,6 +153,35 @@ int main() {
     check(!bad.accepted, "accuracy gate: 50m fix rejected (>20m)");
   }
 
+  // ---- Test 5: reset() clears state so a post-stationary fix isn't an outlier ----
+  {
+    FusionConfig cfg;
+    cfg.enableKalman = true;
+    cfg.maxSpeedMps = 100.0;
+    SensorFusion fusion(cfg);
+    long long t = 0;
+    fusion.process(37.0, -122.0, 8.0, t);  // converge at a point
+    t += 1000;
+    fusion.process(37.0, -122.0, 8.0, t);
+
+    // Movement resumes ~500 m away. As simulateLocation would inject it, the new
+    // fix arrives soon after the last one processed (the 20-min stop produced no
+    // fixes). Without a reset the speed gate sees 500 m / 1 s and rejects it.
+    double farLat = 37.0 + 500.0 * kDegPerMeterLat;  // ~500 m north
+    t += 1000;
+    FusionOutput beforeReset = fusion.process(farLat, -122.0, 8.0, t);
+    check(!beforeReset.accepted, "reset: a 500m/1s jump is rejected without a reset");
+
+    // The controller calls reset() on stationary -> moving; the first fix after is
+    // a fresh seed (speed gate skipped), so it is accepted, not treated as a jump.
+    fusion.reset();
+    t += 1000;
+    FusionOutput afterReset = fusion.process(farLat, -122.0, 8.0, t);
+    check(afterReset.accepted, "reset: the post-stationary fix is accepted after reset");
+    check(std::abs(afterReset.latitude - farLat) < 1e-6,
+          "reset: the seed fix passes through (no smoothing toward stale state)");
+  }
+
   std::printf("== %s ==\n", failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED");
   return failures == 0 ? 0 : 1;
 }

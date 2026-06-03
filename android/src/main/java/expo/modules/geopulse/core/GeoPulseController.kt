@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.os.Build
+import android.os.SystemClock
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -14,9 +15,10 @@ import expo.modules.geopulse.db.LocationStore
 import expo.modules.geopulse.fusion.KalmanBridge
 import expo.modules.geopulse.geofence.GeofenceManager
 import expo.modules.geopulse.headless.GeoPulseHeadlessService
+import expo.modules.geopulse.headless.HeadlessCoalescer
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.service.LocationService
-import expo.modules.geopulse.sync.HttpUploader
+import expo.modules.geopulse.sync.SyncEngine
 import expo.modules.geopulse.sync.SyncWorker
 import expo.modules.geopulse.trip.TripVisitManager
 import expo.modules.geopulse.util.Json
@@ -36,6 +38,9 @@ object GeoPulseController {
   private const val MAX_SPEED_MPS = 100.0
   private const val PROCESS_NOISE = 3.0
   private const val DEFAULT_GET_LIMIT = 1000
+  // Coalesce BUFFER_OVERFLOW emissions: emit once this many points have been
+  // dropped, so a full buffer doesn't spam one event per fix.
+  private const val BUFFER_OVERFLOW_EMIT_THRESHOLD = 50
   // Battery must climb this far above the low-battery threshold (fraction, 0..1)
   // before auto-degrade is undone, so it doesn't flap right at the boundary.
   private const val BATTERY_RECOVERY_HYSTERESIS = 0.1
@@ -82,7 +87,14 @@ object GeoPulseController {
   private val fusionLock = Any()
 
   private val ioExecutor = Executors.newSingleThreadExecutor()
+  // Schedules window-based flushes for headless onLocation coalescing (P1-7).
+  private val scheduler = Executors.newSingleThreadScheduledExecutor()
+  @Volatile private var coalescer: HeadlessCoalescer<Map<String, Any?>>? = null
   private var store: LocationStore? = null
+  // Auth headers refreshed by JS at runtime (setAuthHeaders) and persisted, so the
+  // headless sync worker uses a live token even in a cold process. Loaded lazily.
+  @Volatile private var authHeaders: Map<String, String> = emptyMap()
+  @Volatile private var authHeadersLoaded = false
   private var geofenceManager: GeofenceManager? = null
   private var tripManager: TripVisitManager? = null
 
@@ -111,6 +123,7 @@ object GeoPulseController {
         resolved
       }
     rebuildFusion()
+    rebuildCoalescer()
     persistConfig(applied)
   }
 
@@ -140,6 +153,7 @@ object GeoPulseController {
         resolved
       }
     rebuildFusion()
+    rebuildCoalescer()
     // Persist the config we just set — never a transient eco that a concurrent
     // battery auto-degrade may have written to the live field after the lock.
     persistConfig(applied)
@@ -164,6 +178,7 @@ object GeoPulseController {
     val map = runCatching { ConfigStore(context).loadConfig() }.getOrNull() ?: return
     config = GeoPulseConfig.fromMap(map)
     rebuildFusion()
+    rebuildCoalescer()
     if (config.startOnBoot) start()
   }
 
@@ -181,6 +196,7 @@ object GeoPulseController {
     runCatching { ConfigStore(context).loadConfig() }.getOrNull()?.let {
       config = GeoPulseConfig.fromMap(it)
       rebuildFusion()
+      rebuildCoalescer()
     }
   }
 
@@ -198,7 +214,32 @@ object GeoPulseController {
     // on Android 12+, or no background permission at boot), reflect that instead
     // of reporting tracking active with no service running — important at boot,
     // where there's no JS dispatcher to receive the SERVICE_START_FAILED error.
-    if (!launchService()) enabled = false
+    if (!launchService()) {
+      enabled = false
+    } else {
+      warnIfBackgroundPermissionMissing()
+    }
+  }
+
+  /**
+   * On start with foreground-only location (no ACCESS_BACKGROUND_LOCATION), warn
+   * the consumer (P1-6): tracking works while the app is visible but pauses when
+   * backgrounded. Non-fatal — the SDK never assumes background or crashes; the
+   * consumer can keep tracking degraded or request the upgrade.
+   */
+  private fun warnIfBackgroundPermissionMissing() {
+    val ctx = appContext ?: return
+    if (PermissionsManager.hasLocationPermission(ctx) && !PermissionsManager.hasBackgroundPermission(ctx)) {
+      emit(
+        "onError",
+        mapOf(
+          "code" to "BACKGROUND_PERMISSION_MISSING",
+          "message" to
+            "Tracking started with foreground-only location; it pauses when the app is backgrounded. " +
+            "Request \"Allow all the time\" for background tracking.",
+        ),
+      )
+    }
   }
 
   /** Forget any battery auto-degrade state (an explicit config is authoritative). */
@@ -260,6 +301,11 @@ object GeoPulseController {
     enabled = false
     synchronized(fusionLock) { fusion?.reset() }
     tripManager?.reset()
+    // Flush any buffered headless fixes so a graceful stop doesn't strand them.
+    val ctx = appContext
+    if (ctx != null) {
+      coalescer?.drainNow()?.let { dispatchHeadless(ctx, "onLocation", Json.toJson(it)) }
+    }
   }
 
   // ---- location pipeline ----
@@ -488,7 +534,18 @@ object GeoPulseController {
 
   /** Called by the motion manager when moving<->stationary state flips. */
   fun notifyMotionChange(moving: Boolean) {
+    val wasMoving = isMoving
     isMoving = moving
+    // Leaving stationary while stopOnStationary is on: GPS was off for the stop, so
+    // the Kalman's last position/variance is stale. Reset it (P1-5) so the first
+    // post-resume fix re-seeds the filter and skips the speed-outlier gate — no
+    // false "jump" or rejection when movement starts far from where it stopped.
+    if (moving && !wasMoving && config.stopOnStationary) {
+      synchronized(fusionLock) { fusion?.reset() }
+      // Don't let the as-the-crow-flies jump across the GPS-off stop inflate the
+      // trip distance (P2-8): the first post-resume fix starts a fresh segment.
+      tripManager?.markGap()
+    }
     emit("onMotionChange", mapOf("isMoving" to moving, "location" to lastLocation))
   }
 
@@ -632,11 +689,51 @@ object GeoPulseController {
       fusion = null
     }
 
+  /**
+   * (Re)build the headless onLocation coalescer (P1-7) from the current config.
+   * Null when headless is off or both coalesce knobs are 0 — then each fix is
+   * delivered to the headless task immediately (backward-compatible default).
+   */
+  private fun rebuildCoalescer() {
+    val cfg = config
+    coalescer =
+      if (cfg.enableHeadless && (cfg.headlessCoalesceWindow > 0L || cfg.headlessCoalesceCount > 0)) {
+        HeadlessCoalescer(cfg.headlessCoalesceWindow * 1000L, cfg.headlessCoalesceCount)
+      } else {
+        null
+      }
+  }
+
   // ---- persistence + sync ----
 
   private fun store(): LocationStore? {
     val ctx = appContext ?: return null
     return store ?: LocationStore.getInstance(ctx).also { store = it }
+  }
+
+  /**
+   * Replace the runtime auth headers (e.g. a refreshed bearer token) and persist
+   * them. The JS layer calls this via its `getAuthHeaders` provider; native sync
+   * always uploads with these layered over the static `config.headers`.
+   */
+  fun setAuthHeaders(headers: Map<String, String>) {
+    authHeaders = headers
+    authHeadersLoaded = true
+    val ctx = appContext ?: return
+    ioExecutor.execute { runCatching { ConfigStore(ctx).saveAuthHeaders(headers) } }
+  }
+
+  /** Static config headers with the persisted auth headers layered on top. */
+  fun effectiveHeaders(cfg: GeoPulseConfig): Map<String, String> {
+    if (!authHeadersLoaded) loadAuthHeaders()
+    val auth = authHeaders
+    return if (auth.isEmpty()) cfg.headers else cfg.headers + auth
+  }
+
+  private fun loadAuthHeaders() {
+    val ctx = appContext ?: return
+    authHeaders = runCatching { ConfigStore(ctx).loadAuthHeaders() }.getOrDefault(emptyMap())
+    authHeadersLoaded = true
   }
 
   private fun persist(
@@ -649,13 +746,40 @@ object GeoPulseController {
     val json = Json.toJson(map)
     ioExecutor.execute {
       runCatching {
-        locationStore.insert(uuid, timestamp, json, cfg.maxRecordsToPersist)
+        val dropOldest = !cfg.bufferOverflowPolicy.equals("dropNewest", ignoreCase = true)
+        val dropped = locationStore.insert(uuid, timestamp, json, cfg.maxRecordsToPersist, dropOldest)
+        if (dropped > 0) reportBufferOverflow(dropped, cfg)
         if (cfg.autoSync) {
           val threshold = cfg.autoSyncThreshold
           if (threshold <= 0 || locationStore.count() >= threshold) enqueueSync()
         }
       }
     }
+  }
+
+  // Accumulates dropped-point counts so a steadily-full buffer emits at most one
+  // BUFFER_OVERFLOW per ~TRIM_EVERY drops instead of one per fix. Only touched on
+  // the single-threaded ioExecutor, so it needs no extra synchronization.
+  private var droppedSinceEmit = 0
+
+  private fun reportBufferOverflow(
+    dropped: Int,
+    cfg: GeoPulseConfig,
+  ) {
+    droppedSinceEmit += dropped
+    if (droppedSinceEmit < BUFFER_OVERFLOW_EMIT_THRESHOLD) return
+    val total = droppedSinceEmit
+    droppedSinceEmit = 0
+    emit(
+      "onError",
+      mapOf(
+        "code" to "BUFFER_OVERFLOW",
+        "message" to
+          "Location buffer full (max ${cfg.maxRecordsToPersist}); dropped $total point(s) per ${cfg.bufferOverflowPolicy} policy.",
+        "dropped" to total,
+        "policy" to cfg.bufferOverflowPolicy,
+      ),
+    )
   }
 
   private fun enqueueSync() {
@@ -745,13 +869,25 @@ object GeoPulseController {
           onResult(emptyList())
           return@execute
         }
-        val body = HttpUploader.buildBody(batch.map { it.json }, cfg.params)
-        val result = HttpUploader.upload(url, cfg.httpMethod, cfg.headers, body)
-        if (result.success) {
-          runCatching { locationStore.deleteByIds(batch.map { it.id }) }
-          onResult(batch.map { Json.toMap(it.json) })
-        } else {
-          onResult(null)
+        val outcome =
+          runCatching {
+            SyncEngine.uploadBatch(
+              locationStore,
+              url,
+              cfg.httpMethod,
+              effectiveHeaders(cfg),
+              cfg.params,
+              batch,
+              cfg.discardStatusCodes.toSet(),
+              cfg.retryStatusCodes.toSet(),
+            )
+          }.getOrElse { SyncEngine.Outcome.Retry(0, null) }
+        when (outcome) {
+          is SyncEngine.Outcome.Success -> onResult(batch.map { Json.toMap(it.json) })
+          // The batch was permanently rejected and dropped; nothing was uploaded.
+          is SyncEngine.Outcome.Discarded -> onResult(emptyList())
+          // Transient failure: batch stays buffered; report failure so sync() rejects.
+          is SyncEngine.Outcome.Retry -> onResult(null)
         }
       }
     }
@@ -772,13 +908,39 @@ object GeoPulseController {
     // No JS runtime attached (app killed/swiped away while the foreground service
     // keeps tracking). If headless is enabled, run the registered JS task in a
     // short-lived RN context instead of dropping the event.
-    if (config.enableHeadless) {
-      appContext?.let { ctx ->
-        runCatching {
-          GeoPulseHeadlessService.dispatch(ctx, event, Json.toJson(payload))
-        }
+    if (!config.enableHeadless) return
+    val ctx = appContext ?: return
+    val c = coalescer
+    if (c != null && event == "onLocation") {
+      // P1-7: batch onLocation fixes so a low distanceFilter doesn't spawn one
+      // ephemeral JS context per fix. The SQLite sync pipeline still stores each
+      // fix individually (unaffected) — coalescing is only for JS delivery.
+      val decision = c.add(payload, SystemClock.elapsedRealtime())
+      decision.flushNow?.let { dispatchHeadless(ctx, "onLocation", Json.toJson(it)) }
+      if (decision.armTimer) {
+        scheduler.schedule(
+          Runnable {
+            val due = c.flushIfDue(SystemClock.elapsedRealtime())
+            if (due != null) dispatchHeadless(ctx, "onLocation", Json.toJson(due))
+          },
+          config.headlessCoalesceWindow,
+          TimeUnit.SECONDS,
+        )
       }
+      return
     }
+    // A non-coalesced event: flush any pending coalesced fixes first so ordering is
+    // preserved, then deliver this event immediately.
+    c?.drainNow()?.let { dispatchHeadless(ctx, "onLocation", Json.toJson(it)) }
+    dispatchHeadless(ctx, event, Json.toJson(payload))
+  }
+
+  private fun dispatchHeadless(
+    ctx: Context,
+    event: String,
+    payloadJson: String,
+  ) {
+    runCatching { GeoPulseHeadlessService.dispatch(ctx, event, payloadJson) }
   }
 
   // ---- state ----
@@ -848,5 +1010,45 @@ object GeoPulseController {
         this.elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
       }
     onLocationUpdate(loc)
+  }
+
+  /**
+   * Debug/testing (P2-9): force the GMS-free LocationManager fallback even where
+   * Play Services is available, then relaunch the running tracker so it
+   * re-registers on the framework provider (subsequent fixes carry the raw
+   * provider name). Emits onProviderChange to signal the switch.
+   */
+  fun simulateProviderFailure(provider: String) {
+    if (!provider.equals("gms", ignoreCase = true)) return
+    LocationEngine.forceRawProvider = true
+    if (enabled) launchService()
+    emit(
+      "onProviderChange",
+      mapOf("enabled" to enabled, "gps" to true, "network" to true, "status" to 2),
+    )
+  }
+
+  /**
+   * Debug/testing (P2-9): simulate a signal outage of [durationMs]. Fires the same
+   * onProviderChange(outage=true) the watchdog would after `outageThreshold`, then
+   * onProviderChange(outage=false) once the simulated outage ends.
+   */
+  fun simulateOutage(durationMs: Long) {
+    val threshold =
+      if (config.outageThreshold > 0) {
+        config.outageThreshold
+      } else {
+        (config.locationUpdateInterval * 3).coerceAtLeast(30_000)
+      }
+    scheduler.schedule(
+      Runnable { notifyOutage(active = true, durationMs = threshold) },
+      threshold,
+      TimeUnit.MILLISECONDS,
+    )
+    scheduler.schedule(
+      Runnable { notifyOutage(active = false, durationMs = durationMs) },
+      threshold + durationMs,
+      TimeUnit.MILLISECONDS,
+    )
   }
 }
