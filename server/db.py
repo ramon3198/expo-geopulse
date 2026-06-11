@@ -102,40 +102,59 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def insert_location(device: str, loc: dict[str, Any]) -> bool:
-    """Insert a location, idempotent by (device, uuid).
+def insert_locations(device: str, locs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Insert a batch of locations in ONE transaction, idempotent by (device, uuid).
 
-    Returns True if a new row was inserted, False if it was a duplicate. The
-    UNIQUE(device, uuid) index makes a re-sent batch a no-op via ON CONFLICT, so
+    Returns the sub-list that was newly inserted (the caller broadcasts only those).
+    The UNIQUE(device, uuid) index makes a re-sent batch a no-op via ON CONFLICT, so
     the SDK can safely retry an upload — e.g. after a slow response trips its read
-    timeout — without duplicating points. Rows with a NULL uuid are always
-    inserted (SQLite treats NULLs as distinct, so they can't be deduped).
+    timeout — without duplicating points. Rows with a NULL uuid are always inserted
+    (SQLite treats NULLs as distinct, so they can't be deduped).
+
+    One commit per batch instead of per point: the per-point commit (a full journal
+    fsync each) was the ingestion bottleneck for the SDK's batched uploads.
     """
-    coords = loc.get("coords") or {}
+    if not locs:
+        return []
+    fresh: list[dict[str, Any]] = []
+    received_at = _now_ms()
     with _lock:
-        cur = _conn.execute(
-            """INSERT INTO locations
-               (device, uuid, timestamp, latitude, longitude, accuracy, speed,
-                provider, is_moving, confidence, received_at, json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(device, uuid) DO NOTHING""",
-            (
-                device,
-                loc.get("uuid"),
-                loc.get("timestamp"),
-                coords.get("latitude"),
-                coords.get("longitude"),
-                coords.get("accuracy"),
-                coords.get("speed"),
-                loc.get("provider"),
-                1 if loc.get("isMoving") else 0,
-                loc.get("confidence"),
-                _now_ms(),
-                json.dumps(loc),
-            ),
-        )
-        _conn.commit()
-        return cur.rowcount > 0
+        try:
+            for loc in locs:
+                coords = loc.get("coords") or {}
+                cur = _conn.execute(
+                    """INSERT INTO locations
+                       (device, uuid, timestamp, latitude, longitude, accuracy, speed,
+                        provider, is_moving, confidence, received_at, json)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(device, uuid) DO NOTHING""",
+                    (
+                        device,
+                        loc.get("uuid"),
+                        loc.get("timestamp"),
+                        coords.get("latitude"),
+                        coords.get("longitude"),
+                        coords.get("accuracy"),
+                        coords.get("speed"),
+                        loc.get("provider"),
+                        1 if loc.get("isMoving") else 0,
+                        loc.get("confidence"),
+                        received_at,
+                        json.dumps(loc),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    fresh.append(loc)
+            _conn.commit()
+        except Exception:
+            _conn.rollback()
+            raise
+    return fresh
+
+
+def insert_location(device: str, loc: dict[str, Any]) -> bool:
+    """Single-point convenience over [insert_locations]. True if newly inserted."""
+    return bool(insert_locations(device, [loc]))
 
 
 def insert_trip(device: str, event: dict[str, Any]) -> None:

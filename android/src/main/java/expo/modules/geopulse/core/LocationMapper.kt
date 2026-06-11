@@ -2,7 +2,6 @@ package expo.modules.geopulse.core
 
 import android.content.Context
 import android.location.Location
-import android.os.BatteryManager
 import android.os.Build
 import java.util.UUID
 
@@ -87,10 +86,10 @@ object LocationMapper {
   }
 
   private fun batteryMap(context: Context): Map<String, Any?>? {
-    val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
-    val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-    val isCharging = bm.isCharging
-    if (level < 0) return null
-    return mapOf("level" to level / 100.0, "isCharging" to isCharging)
+    // Cached (30s TTL): reading BatteryManager is a binder IPC call, and this
+    // runs on every fix.
+    val state = BatteryReader.get(context) ?: return null
+    if (state.level < 0) return null
+    return mapOf("level" to state.level / 100.0, "isCharging" to state.isCharging)
   }
 }

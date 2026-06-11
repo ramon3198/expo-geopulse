@@ -61,6 +61,19 @@ def main() -> int:
     check("null-uuid point inserts again", db.insert_location("devC", nouuid) is True)
     check("two null-uuid points kept", len(db.get_locations("devC")) == 2)
 
+    # Batch API (one transaction): returns only the freshly-inserted subset.
+    batch = [
+        {"uuid": "b1", "timestamp": 10, "coords": {"latitude": 1.0, "longitude": 2.0}},
+        {"uuid": "b2", "timestamp": 11, "coords": {"latitude": 1.0, "longitude": 2.0}},
+        dict(point),  # devA already has uuid p1 -> must be skipped
+    ]
+    fresh = db.insert_locations("devA", batch)
+    check("batch: only new points returned", [p["uuid"] for p in fresh] == ["b1", "b2"])
+    check("batch: mixed batch stored the new ones", len(db.get_locations("devA")) == 4)
+    check("batch: re-sending the whole batch is a no-op", db.insert_locations("devA", batch) == [])
+    check("batch: still 4 points", len(db.get_locations("devA")) == 4)
+    check("batch: empty input -> empty", db.insert_locations("devA", []) == [])
+
     print()
     if failures:
         print(f"FAILED ({failures} check(s))")

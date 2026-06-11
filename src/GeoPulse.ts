@@ -21,6 +21,8 @@ import type {
   Trip,
   DrivingEvent,
   SyncErrorEvent,
+  SyncOptions,
+  SyncResult,
 } from './ExpoGeopulse.types';
 
 /** Must match `GeoPulseHeadlessService.TASK_KEY` on the native side. */
@@ -187,15 +189,19 @@ class GeoPulse {
   }
 
   /**
-   * Upload buffered locations now. If an auth provider is registered
-   * ({@link registerAuthProvider}), credentials are refreshed first so a stale
-   * token never causes the upload to fail.
+   * Upload buffered locations now. Resolves with a light {@link SyncResult}
+   * (`{ count }`, plus `discarded`/`status` if the batch was rejected) — pass
+   * `{ returnLocations: true }` if you also want the uploaded points (a large
+   * buffer otherwise means megabytes over the bridge that most apps discard).
+   * If an auth provider is registered ({@link registerAuthProvider}),
+   * credentials are refreshed first so a stale token never causes the upload to
+   * fail.
    */
-  sync(): Promise<Location[]> {
+  sync(options: SyncOptions = {}): Promise<SyncResult> {
     if (this.authProvider) {
-      return this.refreshAuth().then(() => NativeModule.sync());
+      return this.refreshAuth().then(() => NativeModule.sync(options));
     }
-    return NativeModule.sync();
+    return NativeModule.sync(options);
   }
 
   /**
@@ -255,7 +261,7 @@ class GeoPulse {
     this.lastAuthRetryAt = now;
     if (await this.refreshAuth()) {
       try {
-        await NativeModule.sync();
+        await NativeModule.sync({});
       } catch {
         /* a transient failure will retry on the native backoff schedule */
       }

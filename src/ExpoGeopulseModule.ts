@@ -9,6 +9,8 @@ import type {
   PermissionStatus,
   GeoPulseEvents,
   Trip,
+  SyncOptions,
+  SyncResult,
 } from './ExpoGeopulse.types';
 
 /**
@@ -55,7 +57,7 @@ declare class ExpoGeopulseModule extends NativeModule<GeoPulseEvents> {
   getLocations(limit: number): Promise<Location[]>;
   getCount(): Promise<number>;
   destroyLocations(): Promise<void>;
-  sync(): Promise<Location[]>;
+  sync(options: SyncOptions): Promise<SyncResult>;
   setAuthHeaders(headers: Record<string, string>): Promise<void>;
 
   // odometer

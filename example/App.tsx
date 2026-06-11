@@ -322,7 +322,7 @@ export default function App() {
               onPress={async () => {
                 try {
                   const up = await GeoPulse.sync();
-                  append(`sync  uploaded ${up.length}`);
+                  append(`sync  uploaded ${up.count}`);
                   setQueued(await GeoPulse.getCount());
                 } catch (e) {
                   append(`error  ${String(e)}`);

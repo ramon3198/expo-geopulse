@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.7.0
+
+### Breaking
+
+- **`sync()` now resolves with a light `SyncResult` instead of the uploaded
+  `Location[]`.** The old contract marshalled the entire uploaded batch across
+  the JS bridge — up to 10k points (~8-10 MB) with `batchSync` — that most apps
+  immediately discarded. It now resolves `{ count, discarded?, status? }`; pass
+  `{ returnLocations: true }` to opt back into receiving the points.
+  Migration: `(await sync()).length` → `(await sync()).count`.
+- **A slow upload no longer blocks the other sync path.** The WorkManager drain
+  and manual `sync()` still serialize their claim/delete steps, but the HTTP
+  request itself runs outside the lock (previously a 30 s server stall held it
+  for the whole request). If the two paths ever overlap on in-flight rows, the
+  server-side dedup-by-`uuid` absorbs the duplicate — backends MUST dedup by
+  `uuid` per the documented contract (the companion server always did).
+
+### Performance
+
+- **Battery reads are cached (30 s TTL).** The per-fix battery payload and the
+  low-battery auto-degrade check each made 1–3 binder IPC calls to
+  `BatteryManager` on every fix; they now share one cached read
+  (`BatteryReader`), eliminating hours of redundant IPC on long tracking
+  sessions. Worst case, a plug/unplug is noticed 30 s late — harmless to both.
+- **SQLite buffer uses WAL + `synchronous=NORMAL`.** The sync drain (reads +
+  deletes) no longer serializes against per-fix inserts on the rollback journal,
+  and commits skip the per-insert fsync (still durable under WAL).
+- **Dropped the redundant index on `id`** (schema v3 migration): `INTEGER
+  PRIMARY KEY` *is* the rowid B-tree, so the extra index only taxed every
+  insert. Buffered points survive the migration (host-tested).
+- **Right-sized the gzip output buffer** (~25% of input instead of 50%),
+  trimming allocation churn on large batch uploads.
+- **Companion server ingests each batch in ONE transaction.** `insert_locations`
+  replaces the per-point insert+commit (a full journal fsync per point) — order
+  of magnitude faster ingestion for the SDK's batched uploads, same idempotent
+  dedup and only-fresh-points broadcast semantics (host-tested).
+- **Buffer row count is cached in memory.** `count()` was a full-table `COUNT(*)`
+  called on every insert under `dropNewest` and on every fix when
+  `autoSyncThreshold > 0`; the count is now seeded once and maintained by the
+  store's mutators (exact: the idempotent-insert no-op case doesn't increment).
+- **Upload body built in a single pre-sized pass.** The join-then-wrap string
+  concatenation re-copied the whole payload several times (multi-MB transient
+  strings for a large `batchSync` upload); now one `StringBuilder` of the right
+  capacity.
+- **Events stop crossing the JS bridge when nothing listens.** The module now
+  tracks per-event listener presence (`OnStartObserving`/`OnStopObserving`) and
+  skips serializing unobserved events — previously every fix's `onLocation`
+  payload was marshalled to JS just to be dropped there. Observable behavior is
+  identical; high-rate tracking with listener-less screens just stops paying for
+  it.
+- **The per-fix JS payload isn't built at all when nothing consumes it.** With no
+  JS runtime attached, headless off and no sync `url`, the UUID + battery +
+  nested-map construction is skipped entirely (odometer, geofences, trips and
+  driving detection still run on the raw fix).
+
+### Fixes
+
+- **`detach()` is now seen promptly by the location worker** — the JS event
+  dispatcher reference is `@Volatile`, so a torn-down runtime can't receive a
+  stale dispatch from a concurrently-running fix.
+
 ## 0.6.0
 
 ### New features

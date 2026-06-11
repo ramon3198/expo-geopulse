@@ -18,6 +18,22 @@ private class NotImplementedException(
   feature: String,
 ) : CodedException("$feature is not implemented yet (coming in a later milestone).")
 
+/** Every event the module can emit; shared by Events() and the observe hooks. */
+private val EVENT_NAMES =
+  arrayOf(
+    "onLocation",
+    "onMotionChange",
+    "onActivityChange",
+    "onGeofence",
+    "onProviderChange",
+    "onHeartbeat",
+    "onError",
+    "onVisit",
+    "onTrip",
+    "onDrivingEvent",
+    "onSyncError",
+  )
+
 class ExpoGeopulseModule : Module() {
   private val controller get() = GeoPulseController
 
@@ -28,19 +44,15 @@ class ExpoGeopulseModule : Module() {
     ModuleDefinition {
       Name("ExpoGeopulse")
 
-      Events(
-        "onLocation",
-        "onMotionChange",
-        "onActivityChange",
-        "onGeofence",
-        "onProviderChange",
-        "onHeartbeat",
-        "onError",
-        "onVisit",
-        "onTrip",
-        "onDrivingEvent",
-        "onSyncError",
-      )
+      Events(*EVENT_NAMES)
+
+      // Per-event listener tracking: the controller only serializes an event
+      // across the JS bridge while it has at least one listener (a high-rate
+      // onLocation with no listener was pure wasted CPU, dropped JS-side).
+      EVENT_NAMES.forEach { name ->
+        OnStartObserving(name) { controller.setEventObserved(name, true) }
+        OnStopObserving(name) { controller.setEventObserved(name, false) }
+      }
 
       OnCreate {
         val context = appContext.reactContext
@@ -264,10 +276,14 @@ class ExpoGeopulseModule : Module() {
         controller.destroyLocations { promise.resolve(null) }
       }
 
-      AsyncFunction("sync") { promise: Promise ->
-        controller.syncNow { uploaded ->
-          if (uploaded != null) {
-            promise.resolve(uploaded)
+      // Resolves with { count, discarded?, status?, locations? }. `locations` is
+      // only included when options.returnLocations — the full batch (up to 10k
+      // points) over the bridge is an unbounded payload most callers discard.
+      AsyncFunction("sync") { options: Map<String, Any?>, promise: Promise ->
+        val returnLocations = options["returnLocations"] as? Boolean ?: false
+        controller.syncNow(returnLocations) { result ->
+          if (result != null) {
+            promise.resolve(result)
           } else {
             promise.reject(CodedException("Sync failed (HTTP error or no network)."))
           }

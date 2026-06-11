@@ -46,6 +46,9 @@ DEDUP = (
 )
 CREATE_UNIQUE = "CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_uuid ON locations(uuid)"
 
+# mirrors LocationStore.migrateTo3 (drop the redundant index on the rowid alias)
+DROP_ID_INDEX = "DROP INDEX IF EXISTS idx_locations_id"
+
 
 def migrate_to_2(c: sqlite3.Connection) -> None:
     c.execute("BEGIN")
@@ -98,6 +101,25 @@ def main() -> int:
     check("re-inserting an existing uuid is ignored", count(c) == 3)
     c.execute("INSERT OR IGNORE INTO locations (uuid, timestamp, json) VALUES ('d', 9, '{}')")
     check("a new uuid still inserts", count(c) == 4)
+
+    # v2 -> v3: dropping the redundant id index preserves data and the uuid index.
+    c2 = v1_db()
+    insert(c2, "m", 1)
+    insert(c2, "n", 2)
+    migrate_to_2(c2)
+    c2.execute("BEGIN")
+    c2.execute(DROP_ID_INDEX)
+    c2.execute("PRAGMA user_version = 3")
+    c2.execute("COMMIT")
+    idx_names = [r[0] for r in c2.execute("SELECT name FROM sqlite_master WHERE type='index'")]
+    check("v3: id index dropped", "idx_locations_id" not in idx_names)
+    check("v3: uuid unique index kept", has_unique_uuid_index(c2))
+    check("v3: rows preserved", count(c2) == 2)
+    check("v3: at user_version 3", user_version(c2) == 3)
+    check(
+        "v3: ORDER BY id still works (implicit rowid index)",
+        [r[0] for r in c2.execute("SELECT uuid FROM locations ORDER BY id ASC")] == ["m", "n"],
+    )
 
     # Failure path: a migration that fails (unique index over un-deduped dups) must
     # ROLL BACK — data intact, version unchanged (never silently wiped).

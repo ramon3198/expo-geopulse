@@ -359,6 +359,28 @@ export interface DrivingEvent {
   location: Location | null;
 }
 
+export interface SyncOptions {
+  /**
+   * Also resolve with the uploaded locations. Off by default: the full batch
+   * (up to 10k points with `batchSync`) serialized across the JS bridge is an
+   * unbounded payload most callers discard — use `getLocations(limit)` if you
+   * need the data itself.
+   */
+  returnLocations?: boolean;
+}
+
+/** Result of a manual {@link GeoPulse.sync} call. */
+export interface SyncResult {
+  /** Points uploaded and removed from the buffer by this call. */
+  count: number;
+  /** True when the batch was permanently rejected (`BATCH_REJECTED`) and dropped. */
+  discarded?: boolean;
+  /** HTTP status of the rejecting response, present when `discarded`. */
+  status?: number;
+  /** The uploaded locations — only when requested via `{ returnLocations: true }`. */
+  locations?: Location[];
+}
+
 /** Emitted on `onSyncError` after a failed upload attempt (any non-2xx or network error). */
 export interface SyncErrorEvent {
   /** HTTP status (0 = network error / no response). */

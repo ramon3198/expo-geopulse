@@ -155,9 +155,10 @@ async def ingest_locations(request: Request, background_tasks: BackgroundTasks) 
     # Persist everything first (durable, fast, idempotent by uuid), then broadcast
     # AFTER responding (FastAPI background task). The SDK gets its 200 immediately,
     # so a slow dashboard can't push the response past the uploader's read timeout
-    # and trigger a retry — and even if it does retry, insert_location dedupes by
-    # (device, uuid). Only newly-inserted points are broadcast.
-    fresh = [loc for loc in locations if db.insert_location(device, loc)]
+    # and trigger a retry — and even if it does retry, insert_locations dedupes by
+    # (device, uuid). Only newly-inserted points are broadcast. The whole batch is
+    # one transaction (one fsync), not one commit per point.
+    fresh = db.insert_locations(device, locations)
     if fresh:
         background_tasks.add_task(_broadcast_locations, device, fresh)
 

@@ -21,10 +21,21 @@ class LocationStore private constructor(
     val json: String,
   )
 
+  override fun onConfigure(db: SQLiteDatabase) {
+    // WAL lets the sync drain (reads + deletes) run concurrently with per-fix
+    // inserts instead of serializing on the rollback journal, and NORMAL skips
+    // the per-commit fsync (still durable under WAL — at most the last commit is
+    // lost on power failure, i.e. one location fix).
+    db.enableWriteAheadLogging()
+    db.execSQL("PRAGMA synchronous = NORMAL")
+  }
+
   // Fresh installs land directly at the latest schema. SQLiteOpenHelper tracks the
   // version via PRAGMA user_version (the DB_VERSION arg), so onCreate/onUpgrade are
   // driven by it.
   override fun onCreate(db: SQLiteDatabase) {
+    // No index on id: INTEGER PRIMARY KEY *is* the rowid B-tree, so a separate
+    // index would just slow every insert (dropped from old installs in v3).
     db.execSQL(
       "CREATE TABLE $TABLE (" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
@@ -32,7 +43,6 @@ class LocationStore private constructor(
         "timestamp INTEGER, " +
         "json TEXT NOT NULL)",
     )
-    db.execSQL("CREATE INDEX idx_${TABLE}_id ON $TABLE(id)")
     // v2: buffer is idempotent on uuid (mirrors the server's dedup).
     db.execSQL("CREATE UNIQUE INDEX idx_${TABLE}_uuid ON $TABLE(uuid)")
   }
@@ -54,7 +64,8 @@ class LocationStore private constructor(
       while (v < newVersion) {
         when (v) {
           1 -> migrateTo2(db)
-          // future: 2 -> migrateTo3(db)
+          2 -> migrateTo3(db)
+          // future: 3 -> migrateTo4(db)
         }
         v++
       }
@@ -90,7 +101,22 @@ class LocationStore private constructor(
     db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_${TABLE}_uuid ON $TABLE(uuid)")
   }
 
+  /**
+   * v2 -> v3: drop the redundant index on `id` — INTEGER PRIMARY KEY *is* the
+   * rowid B-tree, so the extra index only taxed every insert. Data untouched.
+   */
+  private fun migrateTo3(db: SQLiteDatabase) {
+    db.execSQL("DROP INDEX IF EXISTS idx_${TABLE}_id")
+  }
+
   private var insertsSinceTrim = 0
+
+  // Cached row count: COUNT(*) is a full-table scan, and count() gets called on
+  // every insert under the dropNewest policy and on every fix when
+  // autoSyncThreshold > 0. Seeded lazily once, then maintained by every mutator —
+  // safe as a plain field because ALL access is serialized by @Synchronized (and
+  // this singleton is the only writer of the DB).
+  private var cachedCount = -1
 
   /**
    * Insert a fix, enforcing the buffer cap [maxRecords] per [dropOldest]:
@@ -123,7 +149,9 @@ class LocationStore private constructor(
       }
     // OR IGNORE: with the UNIQUE(uuid) index (schema v2) a re-used uuid is skipped
     // rather than throwing, so the local buffer is idempotent like the server.
-    db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_IGNORE)
+    // Returns -1 when ignored, so the cached count stays exact.
+    val rowId = db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_IGNORE)
+    if (rowId != -1L && cachedCount >= 0) cachedCount++
 
     // Trimming on every insert is wasteful. Only run the DELETE periodically
     // (every TRIM_EVERY inserts) — the table can briefly exceed maxRecords by at
@@ -131,11 +159,14 @@ class LocationStore private constructor(
     // the caller knows how many points were dropped.
     if (maxRecords > 0 && dropOldest && ++insertsSinceTrim >= TRIM_EVERY) {
       insertsSinceTrim = 0
-      return db.delete(
-        TABLE,
-        "id NOT IN (SELECT id FROM $TABLE ORDER BY id DESC LIMIT $maxRecords)",
-        null,
-      )
+      val dropped =
+        db.delete(
+          TABLE,
+          "id NOT IN (SELECT id FROM $TABLE ORDER BY id DESC LIMIT $maxRecords)",
+          null,
+        )
+      if (cachedCount >= 0) cachedCount -= dropped
+      return dropped
     }
     return 0
   }
@@ -185,9 +216,12 @@ class LocationStore private constructor(
 
   @Synchronized
   fun count(): Int {
+    val cached = cachedCount
+    if (cached >= 0) return cached
     readableDatabase.rawQuery("SELECT COUNT(*) FROM $TABLE", null).use { cursor ->
-      return if (cursor.moveToFirst()) cursor.getInt(0) else 0
+      cachedCount = if (cursor.moveToFirst()) cursor.getInt(0) else 0
     }
+    return cachedCount
   }
 
   @Synchronized
@@ -200,18 +234,20 @@ class LocationStore private constructor(
     ids.chunked(DELETE_CHUNK).forEach { chunk ->
       val placeholders = chunk.joinToString(",") { "?" }
       val args = chunk.map { it.toString() }.toTypedArray()
-      db.delete(TABLE, "id IN ($placeholders)", args)
+      val deleted = db.delete(TABLE, "id IN ($placeholders)", args)
+      if (cachedCount >= 0) cachedCount -= deleted
     }
   }
 
   @Synchronized
   fun deleteAll() {
     writableDatabase.delete(TABLE, null, null)
+    cachedCount = 0
   }
 
   companion object {
     private const val DB_NAME = "geopulse.db"
-    private const val DB_VERSION = 2
+    private const val DB_VERSION = 3
     private const val TABLE = "locations"
     private const val TRIM_EVERY = 50
     private const val DELETE_CHUNK = 500 // stay under SQLite's ~999 variable cap
@@ -231,9 +267,12 @@ class LocationStore private constructor(
       }
 
     /**
-     * Serializes a full read→upload→delete sync cycle across the manual `sync()`
-     * path and the WorkManager [SyncWorker], so they can't both claim and upload
-     * the same rows (duplicate uploads).
+     * Serializes the claim (read) and settle (delete) steps of a sync cycle
+     * across the manual `sync()` path and the WorkManager [SyncWorker]. The
+     * upload itself runs OUTSIDE this lock so a slow server can't block the
+     * other path for a whole request; if the two paths overlap on in-flight
+     * rows, the server's dedup-by-uuid absorbs the duplicate and the id-keyed
+     * double delete is a no-op.
      */
     val syncLock = Any()
   }

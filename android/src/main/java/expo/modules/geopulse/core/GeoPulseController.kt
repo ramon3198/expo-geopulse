@@ -23,6 +23,7 @@ import expo.modules.geopulse.sync.SyncWorker
 import expo.modules.geopulse.trip.TripVisitManager
 import expo.modules.geopulse.util.Json
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -55,7 +56,16 @@ object GeoPulseController {
       "fastestLocationUpdateInterval",
     )
 
-  private var dispatcher: EventDispatcher? = null
+  // Written by attach/detach on the JS thread, read by emit() on the location
+  // worker thread — volatile so a detach is seen promptly (no stale dispatch).
+  @Volatile private var dispatcher: EventDispatcher? = null
+
+  // Event names JS currently has at least one listener for (maintained by the
+  // module's per-event OnStartObserving/OnStopObserving). With a runtime attached
+  // but no listener, dispatching would serialize the payload across the bridge
+  // just for JS to drop it — for onLocation at ~1 Hz that's hours of wasted
+  // CPU. JS observably sees the same thing either way: nothing.
+  private val observedEvents: MutableSet<String> = ConcurrentHashMap.newKeySet()
   private var appContext: Context? = null
 
   @Volatile
@@ -105,11 +115,22 @@ object GeoPulseController {
     eventDispatcher: EventDispatcher,
   ) {
     appContext = context.applicationContext
+    // A fresh runtime starts with no listeners; observation state is rebuilt by
+    // OnStartObserving as JS re-subscribes (stale truths would defeat the gate).
+    observedEvents.clear()
     dispatcher = eventDispatcher
   }
 
   fun detach() {
     dispatcher = null
+  }
+
+  /** Tracks per-event JS listener presence (module OnStartObserving/OnStopObserving). */
+  fun setEventObserved(
+    event: String,
+    observed: Boolean,
+  ) {
+    if (observed) observedEvents.add(event) else observedEvents.remove(event)
   }
 
   // ---- configuration / lifecycle ----
@@ -352,22 +373,30 @@ object GeoPulseController {
     }
     lastAndroidLocation = location
 
-    val map =
-      LocationMapper.toMap(
-        location,
-        isMoving,
-        provider = provider,
-        filtered = filtered,
-        overrideLat = lat,
-        overrideLng = lng,
-        overrideAccuracy = accuracy,
-        context = appContext,
-      )
-    lastLocation = map
-    emit("onLocation", map)
+    // No JS runtime, no headless task and no sync URL -> nothing consumes the
+    // JS-shaped payload, so skip building it (UUID + battery + 9-key map per
+    // fix). Odometer, geofences, trips and driving detection below still run on
+    // the raw fix. lastLocation refreshes on the first fix after a runtime
+    // attaches (one fix-interval of staleness, only in this consumer-less mode).
+    val hasConsumer = dispatcher != null || cfg.enableHeadless || cfg.url != null
+    if (hasConsumer) {
+      val map =
+        LocationMapper.toMap(
+          location,
+          isMoving,
+          provider = provider,
+          filtered = filtered,
+          overrideLat = lat,
+          overrideLng = lng,
+          overrideAccuracy = accuracy,
+          context = appContext,
+        )
+      lastLocation = map
+      emit("onLocation", map)
 
-    if (cfg.url != null) {
-      persist(map, cfg)
+      if (cfg.url != null) {
+        persist(map, cfg)
+      }
     }
     feedGeofences(lat, lng)
 
@@ -455,10 +484,12 @@ object GeoPulseController {
     // (we still need to check for recovery while degraded).
     if (config.lowBatteryThreshold <= 0.0 && !degradedForBattery) return
     val ctx = appContext ?: return
-    val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager ?: return
-    val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    // Cached (30s TTL): this runs per fix, and each BatteryManager read is a
+    // binder IPC call. A degrade/recovery reacting up to 30s late is harmless.
+    val battery = BatteryReader.get(ctx) ?: return
+    val level = battery.level
     if (level < 0) return
-    val charging = bm.isCharging
+    val charging = battery.isCharging
 
     if (degradedForBattery) {
       // Recovery: restore the pre-degrade config once charging, or once the level
@@ -843,52 +874,71 @@ object GeoPulseController {
     }
   }
 
-  /** Manual, immediate sync. Resolves with the uploaded locations, or null on failure. */
-  fun syncNow(onResult: (List<Map<String, Any?>>?) -> Unit) {
+  /**
+   * Manual, immediate sync of one batch. Resolves with a result map — `count`
+   * (points uploaded and removed from the buffer), plus `discarded`/`status`
+   * when the batch was permanently rejected, plus `locations` only when
+   * [returnLocations] (marshalling up to 10k points across the JS bridge by
+   * default was an unbounded payload most callers threw away). Null on
+   * transient failure, so `sync()` rejects.
+   */
+  fun syncNow(
+    returnLocations: Boolean,
+    onResult: (Map<String, Any?>?) -> Unit,
+  ) {
     val cfg = config
     val locationStore = store()
     val url = cfg.url
     if (locationStore == null || url == null) {
-      onResult(emptyList())
+      onResult(mapOf("count" to 0))
       return
     }
     ioExecutor.execute {
-      // Serialize with the WorkManager sync path so the same rows can't be
-      // claimed and uploaded twice.
+      val limit =
+        if (cfg.batchSync) {
+          // Whole backlog in one request; getAll() treats <= 0 as "no limit", so
+          // pass maxRecordsToPersist through (0 = unlimited persistence -> all rows).
+          cfg.maxRecordsToPersist
+        } else {
+          if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
+        }
+      // Claim and settle are serialized with the WorkManager path via syncLock;
+      // the upload itself runs unlocked (a slow server shouldn't block the other
+      // path — the server's dedup-by-uuid absorbs a rare overlapped batch).
+      val batch =
+        synchronized(LocationStore.syncLock) {
+          runCatching { locationStore.getAll(limit) }.getOrDefault(emptyList())
+        }
+      if (batch.isEmpty()) {
+        onResult(mapOf("count" to 0))
+        return@execute
+      }
+      val outcome =
+        runCatching {
+          SyncEngine.upload(
+            url,
+            cfg.httpMethod,
+            effectiveHeaders(cfg),
+            cfg.params,
+            batch,
+            cfg.discardStatusCodes.toSet(),
+            cfg.retryStatusCodes.toSet(),
+          )
+        }.getOrElse { SyncEngine.Outcome.Retry(0, null) }
       synchronized(LocationStore.syncLock) {
-        val limit =
-          if (cfg.batchSync) {
-            // Whole backlog in one request; getAll() treats <= 0 as "no limit", so
-            // pass maxRecordsToPersist through (0 = unlimited persistence -> all rows).
-            cfg.maxRecordsToPersist
-          } else {
-            if (cfg.maxBatchSize > 0) cfg.maxBatchSize else 250
-          }
-        val batch = runCatching { locationStore.getAll(limit) }.getOrDefault(emptyList())
-        if (batch.isEmpty()) {
-          onResult(emptyList())
-          return@execute
+        runCatching { SyncEngine.settle(locationStore, batch, outcome) }
+      }
+      when (outcome) {
+        is SyncEngine.Outcome.Success -> {
+          val result = mutableMapOf<String, Any?>("count" to batch.size)
+          if (returnLocations) result["locations"] = batch.map { Json.toMap(it.json) }
+          onResult(result)
         }
-        val outcome =
-          runCatching {
-            SyncEngine.uploadBatch(
-              locationStore,
-              url,
-              cfg.httpMethod,
-              effectiveHeaders(cfg),
-              cfg.params,
-              batch,
-              cfg.discardStatusCodes.toSet(),
-              cfg.retryStatusCodes.toSet(),
-            )
-          }.getOrElse { SyncEngine.Outcome.Retry(0, null) }
-        when (outcome) {
-          is SyncEngine.Outcome.Success -> onResult(batch.map { Json.toMap(it.json) })
-          // The batch was permanently rejected and dropped; nothing was uploaded.
-          is SyncEngine.Outcome.Discarded -> onResult(emptyList())
-          // Transient failure: batch stays buffered; report failure so sync() rejects.
-          is SyncEngine.Outcome.Retry -> onResult(null)
-        }
+        // The batch was permanently rejected and dropped; nothing was uploaded.
+        is SyncEngine.Outcome.Discarded ->
+          onResult(mapOf("count" to 0, "discarded" to true, "status" to outcome.status))
+        // Transient failure: batch stays buffered; report failure so sync() rejects.
+        is SyncEngine.Outcome.Retry -> onResult(null)
       }
     }
   }
@@ -902,7 +952,10 @@ object GeoPulseController {
   ) {
     val d = dispatcher
     if (d != null) {
-      d.dispatch(event, payload)
+      // Skip the bridge serialization when JS has no listener for this event —
+      // it would be dropped on the JS side anyway. (A listener registered right
+      // after this check misses the event, exactly as it would have today.)
+      if (event in observedEvents) d.dispatch(event, payload)
       return
     }
     // No JS runtime attached (app killed/swiped away while the foreground service

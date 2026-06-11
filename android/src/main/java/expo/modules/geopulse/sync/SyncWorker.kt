@@ -48,43 +48,43 @@ class SyncWorker(
     val discard = config.discardStatusCodes.toSet()
     val retry = config.retryStatusCodes.toSet()
 
-    // Serialize the whole drain with the manual sync() path so they can't claim
-    // and upload the same rows twice.
-    synchronized(LocationStore.syncLock) {
-      // Drain the whole backlog in this run: keep uploading batches while rows
-      // remain and uploads succeed. MAX_BATCHES caps a single run.
-      repeat(MAX_BATCHES_PER_RUN) {
-        val batch = store.getAll(batchSize)
-        if (batch.isEmpty()) return Result.success()
+    // Drain the whole backlog in this run: keep uploading batches while rows
+    // remain and uploads succeed. MAX_BATCHES caps a single run. The claim and
+    // the settle (delete) are serialized with the manual sync() path via
+    // syncLock, but the upload itself runs WITHOUT the lock so a slow server
+    // can't block a manual sync() for the whole request — if both paths race the
+    // same in-flight rows, the server's dedup-by-uuid absorbs the duplicate.
+    repeat(MAX_BATCHES_PER_RUN) {
+      val batch = synchronized(LocationStore.syncLock) { store.getAll(batchSize) }
+      if (batch.isEmpty()) return Result.success()
 
-        // Re-read effective headers per batch so a JS token refresh (setAuthHeaders)
-        // triggered by a 401 mid-drain is picked up on the very next batch.
-        val outcome =
-          SyncEngine.uploadBatch(
-            store,
-            url,
-            config.httpMethod,
-            GeoPulseController.effectiveHeaders(config),
-            config.params,
-            batch,
-            discard,
-            retry,
-          )
-        when (outcome) {
-          is SyncEngine.Outcome.Success -> Unit // keep draining
-          is SyncEngine.Outcome.Discarded -> Unit // batch dropped; keep draining
-          is SyncEngine.Outcome.Retry -> {
-            val delay = outcome.delaySeconds
-            return if (delay != null) {
-              // Respect Retry-After precisely: schedule a delayed continuation and
-              // report success so WorkManager's own backoff doesn't also kick in.
-              scheduleContinuation(applicationContext, delay)
-              Result.success()
-            } else {
-              // Network error / 5xx / 408 / 429 (no Retry-After) / recoverable auth:
-              // back off and retry the same batch.
-              Result.retry()
-            }
+      // Re-read effective headers per batch so a JS token refresh (setAuthHeaders)
+      // triggered by a 401 mid-drain is picked up on the very next batch.
+      val outcome =
+        SyncEngine.upload(
+          url,
+          config.httpMethod,
+          GeoPulseController.effectiveHeaders(config),
+          config.params,
+          batch,
+          discard,
+          retry,
+        )
+      synchronized(LocationStore.syncLock) { SyncEngine.settle(store, batch, outcome) }
+      when (outcome) {
+        is SyncEngine.Outcome.Success -> Unit // keep draining
+        is SyncEngine.Outcome.Discarded -> Unit // batch dropped; keep draining
+        is SyncEngine.Outcome.Retry -> {
+          val delay = outcome.delaySeconds
+          return if (delay != null) {
+            // Respect Retry-After precisely: schedule a delayed continuation and
+            // report success so WorkManager's own backoff doesn't also kick in.
+            scheduleContinuation(applicationContext, delay)
+            Result.success()
+          } else {
+            // Network error / 5xx / 408 / 429 (no Retry-After) / recoverable auth:
+            // back off and retry the same batch.
+            Result.retry()
           }
         }
       }

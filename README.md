@@ -239,7 +239,8 @@ if (p.level === 'foregroundOnly') {
 - Subscribe with `onDrivingEvent` — `{ type: 'harsh_braking' | 'harsh_acceleration' | 'speeding' | 'idling', severity, magnitude, speed, location }`.
 
 ### Persistence & sync
-- `getLocations(): Promise<Location[]>` · `getCount(): Promise<number>` · `destroyLocations()` · `sync(): Promise<Location[]>`
+- `getLocations(): Promise<Location[]>` · `getCount(): Promise<number>` · `destroyLocations()`
+- `sync(options?): Promise<SyncResult>` — upload one batch now; resolves `{ count, discarded?, status? }`. Pass `{ returnLocations: true }` to also get the uploaded points (off by default — a big buffer otherwise means megabytes over the JS bridge).
 
 ### Testing
 - `simulateLocation({ latitude, longitude, accuracy?, speed?, timestamp? })` — inject a fix through the full pipeline (fusion, geofences, trips/visits) to test from your desk without walking a route. Pass increasing `timestamp` values to simulate motion.

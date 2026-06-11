@@ -1,6 +1,6 @@
 {
   "name": "expo-geopulse",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Open-source background geolocation SDK for React Native + Expo (Android): fused location, Kalman sensor-fusion (C++/NDK), geofencing, battery-smart motion detection, offline sync.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -34,7 +34,10 @@
     "expo-geopulse",
     "ExpoGeopulse"
   ],
-  "repository": "https://github.com/ramon3198/expo-geopulse",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ramon3198/expo-geopulse.git"
+  },
   "bugs": {
     "url": "https://github.com/ramon3198/expo-geopulse/issues"
   },
