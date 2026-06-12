@@ -270,6 +270,12 @@ export interface Activity {
 
 export interface Location {
   uuid: string;
+  /**
+   * The tracking session this fix belongs to — a fresh UUID per `start()`,
+   * stable across process restarts mid-run. Lets backends/dashboards group
+   * points per tracking run instead of one ever-growing trace.
+   */
+  sessionId?: string;
   /** Epoch milliseconds. */
   timestamp: number;
   coords: Coords;

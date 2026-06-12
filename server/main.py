@@ -193,8 +193,18 @@ def devices() -> list[dict[str, Any]]:
 
 
 @app.get("/locations/{device}")
-def locations(device: str, limit: int = 1000) -> list[dict[str, Any]]:
-    return db.get_locations(device, limit)
+def locations(
+    device: str, limit: int = 1000, session: str | None = None
+) -> list[dict[str, Any]]:
+    """Points for a device. `session` filters to one tracking run (the SDK stamps
+    a fresh sessionId per start()); "legacy" selects pre-session points."""
+    return db.get_locations(device, limit, session)
+
+
+@app.get("/sessions/{device}")
+def sessions(device: str) -> list[dict[str, Any]]:
+    """The device's tracking sessions, newest first (points + time range each)."""
+    return db.get_sessions(device)
 
 
 @app.get("/events/{device}")

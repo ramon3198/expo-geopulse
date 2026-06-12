@@ -107,6 +107,12 @@ object GeoPulseController {
   // Accuracy inflation from GNSS signal quality, written by the LocationService's
   // GnssStatus monitor (1.0 = healthy constellation; >1 = trust fixes less).
   @Volatile var gnssAccuracyInflation: Double = 1.0
+
+  // Tracking session id: fresh per explicit start(), persisted so a cold process
+  // restart continues the same logical session. Stamped on every location so
+  // backends/dashboards can group points per tracking run instead of one
+  // ever-growing trace.
+  @Volatile private var sessionId: String? = null
   private var store: LocationStore? = null
   // Auth headers refreshed by JS at runtime (setAuthHeaders) and persisted, so the
   // headless sync worker uses a live token even in a cold process. Loaded lazily.
@@ -228,6 +234,12 @@ object GeoPulseController {
   fun ensureInitialized(context: Context) {
     if (appContext != null) return
     appContext = context.applicationContext
+    // A cold service/worker restart continues the persisted session — it's the
+    // same logical tracking run. (An explicit start(), including the boot
+    // resume, generates a fresh one instead.)
+    if (sessionId == null) {
+      sessionId = runCatching { ConfigStore(context).loadSessionId() }.getOrNull()
+    }
     runCatching { ConfigStore(context).loadConfig() }.getOrNull()?.let {
       config = GeoPulseConfig.fromMap(it)
       rebuildFusion()
@@ -238,6 +250,13 @@ object GeoPulseController {
 
   fun start() {
     enabled = true
+    // A fresh tracking session: every explicit start() begins a new one (cold
+    // service restarts reuse the persisted id instead — see ensureInitialized).
+    val newSession = UUID.randomUUID().toString()
+    sessionId = newSession
+    appContext?.let { ctx ->
+      ioExecutor.execute { runCatching { ConfigStore(ctx).saveSessionId(newSession) } }
+    }
     // Fresh start at the configured accuracy: undo any prior battery auto-degrade
     // (it re-applies on the next fix if the battery is still low).
     synchronized(configLock) {
@@ -438,11 +457,13 @@ object GeoPulseController {
           overrideAccuracy = accuracy,
           context = appContext,
         )
+      val extras = mutableMapOf<String, Any?>()
+      sessionId?.let { extras["sessionId"] = it }
       if (cfg.debugIncludeRaw && filtered) {
-        map =
-          map.toMutableMap().apply {
-            put("raw", mapOf("latitude" to rawLat, "longitude" to rawLng, "accuracy" to rawAccuracy))
-          }
+        extras["raw"] = mapOf("latitude" to rawLat, "longitude" to rawLng, "accuracy" to rawAccuracy)
+      }
+      if (extras.isNotEmpty()) {
+        map = map.toMutableMap().apply { putAll(extras) }
       }
       // lastLocation tracks the LIVE fix even when smoothing delays emission.
       lastLocation = map

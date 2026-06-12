@@ -74,6 +74,32 @@ def main() -> int:
     check("batch: still 4 points", len(db.get_locations("devA")) == 4)
     check("batch: empty input -> empty", db.insert_locations("devA", []) == [])
 
+    # Sessions: points group per tracking run; pre-session points land in "legacy".
+    db.insert_locations(
+        "devS",
+        [
+            {"uuid": "old-a", "timestamp": 0, "coords": {"latitude": 0.0, "longitude": 0.0}},  # no sessionId
+            {"uuid": "s1-a", "sessionId": "run-1", "timestamp": 1, "coords": {"latitude": 1.0, "longitude": 1.0}},
+            {"uuid": "s1-b", "sessionId": "run-1", "timestamp": 2, "coords": {"latitude": 1.1, "longitude": 1.0}},
+            {"uuid": "s2-a", "sessionId": "run-2", "timestamp": 10, "coords": {"latitude": 2.0, "longitude": 1.0}},
+        ],
+    )
+    sess = db.get_sessions("devS")
+    check("sessions: grouped per run + legacy", {s["session"] for s in sess} == {"run-1", "run-2", "legacy"})
+    check("sessions: newest run first", sess[0]["session"] == "run-2")
+    run1 = next(s for s in sess if s["session"] == "run-1")
+    check("sessions: per-run point count", run1["points"] == 2)
+    check("sessions: time range", run1["start_ts"] == 1 and run1["end_ts"] == 2)
+    check(
+        "sessions: filter returns only that run",
+        [p["uuid"] for p in db.get_locations("devS", session="run-1")] == ["s1-a", "s1-b"],
+    )
+    check(
+        "sessions: 'legacy' selects pre-session points",
+        [p["uuid"] for p in db.get_locations("devS", session="legacy")] == ["old-a"],
+    )
+    check("sessions: no filter returns everything", len(db.get_locations("devS")) == 4)
+
     print()
     if failures:
         print(f"FAILED ({failures} check(s))")

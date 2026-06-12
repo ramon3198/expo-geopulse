@@ -7,6 +7,7 @@ import { MapView } from './MapView';
 import { Sparkline } from './Sparkline';
 import { useLiveFeed } from './useLiveFeed';
 import { formatDistance, formatDuration, formatTime, pathDistance } from './utils';
+import type { SessionInfo } from './types';
 
 const kindMeta: Record<string, { color: string; icon: string }> = {
   trip: { color: '#38bdf8', icon: '↗' },
@@ -14,13 +15,36 @@ const kindMeta: Record<string, { color: string; icon: string }> = {
   driving: { color: '#fbbf24', icon: '⚡' },
 };
 
-export default function App() {
-  const { connected, devices, device, selectDevice, path, last, visits, feed } =
-    useLiveFeed();
+function sessionLabel(s: SessionInfo, isNewest: boolean): string {
+  if (s.session === 'legacy') return `History (pre-sessions) · ${s.points} pts`;
+  const start = s.start_ts
+    ? new Date(s.start_ts).toLocaleString([], {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '—';
+  return `${isNewest ? '● ' : ''}${start} · ${s.points} pts`;
+}
 
-  const [styleId, setStyleId] = useState(
-    () => localStorage.getItem('gp-style') ?? 'dark'
-  );
+export default function App() {
+  const {
+    connected,
+    devices,
+    device,
+    selectDevice,
+    sessions,
+    session,
+    liveSession,
+    selectSession,
+    path,
+    last,
+    visits,
+    feed,
+  } = useLiveFeed();
+
+  const [styleId, setStyleId] = useState(() => localStorage.getItem('gp-style') ?? 'dark');
   const [follow, setFollow] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const mapStyle = styleById(styleId);
@@ -48,20 +72,46 @@ export default function App() {
         path={path}
         last={last}
         visits={visits}
-        deviceKey={device}
+        deviceKey={`${device}:${session}`}
         follow={follow}
       />
 
-      <div className={`panel glass ${collapsed ? 'collapsed' : ''}`}>
-        <header className="head">
+      {/* Floating map controls */}
+      <div className="map-controls">
+        <select
+          className="map-select"
+          value={styleId}
+          onChange={(e) => setStyleId(e.target.value)}
+          title="Map style"
+        >
+          {MAP_STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <button
+          className={`map-btn ${follow ? 'on' : ''}`}
+          title={follow ? 'Following — click to free pan' : 'Click to follow device'}
+          onClick={() => setFollow((f) => !f)}
+        >
+          ◎
+        </button>
+      </div>
+
+      <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+        <header className="side-head">
           <div className="brand">
-            <span className="brand-dot" />
-            <span className="brand-name">GeoPulse</span>
+            <div className="brand-mark">◉</div>
+            <div>
+              <div className="brand-name">GeoPulse</div>
+              <div className="brand-sub">Live tracking console</div>
+            </div>
           </div>
           <div className="head-actions">
             <div className={`pill ${connected ? 'pill-live' : 'pill-off'}`}>
               <span className="pulse-dot" />
-              {connected ? 'LIVE' : '···'}
+              {connected ? 'LIVE' : 'OFFLINE'}
             </div>
             <button
               className="icon-btn"
@@ -74,112 +124,105 @@ export default function App() {
         </header>
 
         {!collapsed && (
-          <>
-            <div className="controls">
-              <div className="select-wrap">
+          <div className="side-body">
+            <section className="section">
+              <label className="field">
+                <span className="field-label">Device</span>
                 <select
-                  className="device-select"
+                  className="field-select"
                   value={device ?? ''}
                   onChange={(e) => selectDevice(e.target.value)}
                 >
                   {devices.length === 0 && <option value="">No devices yet</option>}
                   {devices.map((d) => (
                     <option key={d.device} value={d.device}>
-                      {d.device} · {d.points} pts
+                      {d.device}
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className="select-wrap small">
+              </label>
+
+              <label className="field">
+                <span className="field-label">
+                  Session
+                  {liveSession && session !== 'legacy' && (
+                    <span className="field-tag">live</span>
+                  )}
+                </span>
                 <select
-                  className="device-select"
-                  value={styleId}
-                  onChange={(e) => setStyleId(e.target.value)}
+                  className="field-select"
+                  value={session ?? ''}
+                  onChange={(e) => selectSession(e.target.value)}
                 >
-                  {MAP_STYLES.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
+                  {sessions.length === 0 && <option value="">No sessions yet</option>}
+                  {sessions.map((s, i) => (
+                    <option key={s.session} value={s.session}>
+                      {sessionLabel(s, i === 0)}
                     </option>
                   ))}
                 </select>
+              </label>
+            </section>
+
+            <section className="section stats">
+              <Stat label="Distance" value={formatDistance(distance)} />
+              <Stat label="Duration" value={formatDuration(duration)} />
+              <Stat label="Speed" value={speedKmh} unit="km/h" />
+              <Stat label="Points" value={String(path.length)} />
+            </section>
+
+            <section className="section">
+              <div className="spark-card">
+                <div className="overline">Speed · last {speeds.length} fixes</div>
+                <Sparkline values={speeds} color="var(--accent)" />
               </div>
-              <button
-                className={`icon-btn follow ${follow ? 'on' : ''}`}
-                title={follow ? 'Following — click to free pan' : 'Click to follow device'}
-                onClick={() => setFollow((f) => !f)}
-              >
-                ◎
-              </button>
-            </div>
+            </section>
 
-            <div className="stats">
-              <Stat label="Distance" value={formatDistance(distance)} accent="#38bdf8" />
-              <Stat label="Duration" value={formatDuration(duration)} accent="#a78bfa" />
-              <Stat label="Speed" value={speedKmh} unit="km/h" accent="#22d3ee" />
-              <Stat label="Visits" value={String(visits.length)} accent="#34d399" />
-            </div>
-
-            <div className="spark-card glass-inner">
-              <div className="spark-label">Speed · last {speeds.length} fixes</div>
-              <Sparkline values={speeds} color="#22d3ee" />
-            </div>
-
-            <div className="meta-row">
+            <section className="section meta-row">
               <span className="chip">{last?.provider ?? 'no fix'}</span>
-              {last?.confidence != null && (
-                <span className="chip chip-conf">conf {last.confidence}</span>
-              )}
+              {last?.confidence != null && <span className="chip">conf {last.confidence}</span>}
               <span className="chip">±{last?.coords.accuracy?.toFixed(0) ?? '—'} m</span>
-              {last?.isMock && <span className="chip chip-mock">MOCK</span>}
-            </div>
-
-            {last && (
-              <div className="coords">
-                {last.coords.latitude.toFixed(6)}, {last.coords.longitude.toFixed(6)}
-              </div>
-            )}
-
-            <div className="feed-head">Activity</div>
-            <ul className="feed">
-              {feed.length === 0 && (
-                <li className="empty">Waiting for trips, visits &amp; driving events…</li>
+              {last?.isMock && <span className="chip chip-warn">MOCK</span>}
+              {last && (
+                <span className="coords">
+                  {last.coords.latitude.toFixed(6)}, {last.coords.longitude.toFixed(6)}
+                </span>
               )}
-              {feed.map((f, i) => {
-                const m = kindMeta[f.kind];
-                return (
-                  <li key={i} className="event">
-                    <span className="event-icon" style={{ color: m.color }}>
-                      {m.icon}
-                    </span>
-                    <span className="event-label">{f.label}</span>
-                    {f.detail && <span className="event-detail">{f.detail}</span>}
-                    {f.at > 0 && <span className="event-time">{formatTime(f.at)}</span>}
-                  </li>
-                );
-              })}
-            </ul>
-          </>
+            </section>
+
+            <section className="section feed-section">
+              <div className="overline">Activity</div>
+              <ul className="feed">
+                {feed.length === 0 && (
+                  <li className="empty">Waiting for trips, visits &amp; driving events…</li>
+                )}
+                {feed.map((f, i) => {
+                  const m = kindMeta[f.kind];
+                  return (
+                    <li key={i} className="event">
+                      <span className="event-icon" style={{ color: m.color }}>
+                        {m.icon}
+                      </span>
+                      <span className="event-label">{f.label}</span>
+                      {f.detail && <span className="event-detail">{f.detail}</span>}
+                      {f.at > 0 && <span className="event-time">{formatTime(f.at)}</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          </div>
         )}
-      </div>
+      </aside>
     </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  unit,
-  accent,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  accent: string;
-}) {
+function Stat({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
-    <div className="stat glass-inner">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value" style={{ color: accent }}>
+    <div className="stat">
+      <div className="overline">{label}</div>
+      <div className="stat-value">
         {value}
         {unit && <span className="stat-unit"> {unit}</span>}
       </div>

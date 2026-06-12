@@ -7,12 +7,22 @@ export interface Coords {
 
 export interface GeoLocation {
   uuid: string;
+  /** Tracking run this fix belongs to (SDK stamps one per start()). */
+  sessionId?: string;
   timestamp: number;
   coords: Coords;
   provider?: string;
   isMoving?: boolean;
   confidence?: number;
   isMock?: boolean;
+}
+
+/** One tracking run, as grouped by the backend (`legacy` = pre-session points). */
+export interface SessionInfo {
+  session: string;
+  points: number;
+  start_ts: number | null;
+  end_ts: number | null;
 }
 
 export interface VisitMarker {

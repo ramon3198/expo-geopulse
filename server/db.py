@@ -33,6 +33,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 device TEXT NOT NULL,
                 uuid TEXT,
+                session TEXT,
                 timestamp INTEGER,
                 latitude REAL,
                 longitude REAL,
@@ -95,6 +96,16 @@ def init_db() -> None:
                 ON locations(device, uuid);
             """
         )
+        # Sessions: group points per tracking run (SDK stamps `sessionId` per
+        # start()). The guarded ALTER upgrades databases created before the
+        # column existed; fresh databases already have it from CREATE TABLE.
+        try:
+            _conn.execute("ALTER TABLE locations ADD COLUMN session TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already present
+        _conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_loc_device_session ON locations(device, session, id)"
+        )
         _conn.commit()
 
 
@@ -124,13 +135,14 @@ def insert_locations(device: str, locs: list[dict[str, Any]]) -> list[dict[str, 
                 coords = loc.get("coords") or {}
                 cur = _conn.execute(
                     """INSERT INTO locations
-                       (device, uuid, timestamp, latitude, longitude, accuracy, speed,
+                       (device, uuid, session, timestamp, latitude, longitude, accuracy, speed,
                         provider, is_moving, confidence, received_at, json)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(device, uuid) DO NOTHING""",
                     (
                         device,
                         loc.get("uuid"),
+                        loc.get("sessionId"),
                         loc.get("timestamp"),
                         coords.get("latitude"),
                         coords.get("longitude"),
@@ -203,15 +215,62 @@ def list_devices() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def get_locations(device: str, limit: int = 1000) -> list[dict[str, Any]]:
+def get_locations(
+    device: str, limit: int = 1000, session: str | None = None
+) -> list[dict[str, Any]]:
+    """A device's points, optionally filtered to one tracking session.
+
+    `session` semantics: None = all points (back-compat); the sentinel "legacy"
+    = points recorded before sessions existed (NULL column); anything else = a
+    session id stamped by the SDK.
+    """
     with _lock:
-        rows = _conn.execute(
-            """SELECT json FROM locations WHERE device = ?
-               ORDER BY id DESC LIMIT ?""",
-            (device, limit),
-        ).fetchall()
+        if session is None:
+            rows = _conn.execute(
+                "SELECT json FROM locations WHERE device = ? ORDER BY id DESC LIMIT ?",
+                (device, limit),
+            ).fetchall()
+        elif session == "legacy":
+            rows = _conn.execute(
+                """SELECT json FROM locations WHERE device = ? AND session IS NULL
+                   ORDER BY id DESC LIMIT ?""",
+                (device, limit),
+            ).fetchall()
+        else:
+            rows = _conn.execute(
+                """SELECT json FROM locations WHERE device = ? AND session = ?
+                   ORDER BY id DESC LIMIT ?""",
+                (device, session, limit),
+            ).fetchall()
     # Return chronological order (oldest first) for drawing the path.
     return [json.loads(r["json"]) for r in reversed(rows)]
+
+
+def get_sessions(device: str) -> list[dict[str, Any]]:
+    """A device's tracking sessions, newest first. Pre-session points (NULL
+    column) are grouped under the sentinel id "legacy" so old data stays
+    reachable."""
+    with _lock:
+        rows = _conn.execute(
+            """SELECT COALESCE(session, 'legacy') AS session,
+                      COUNT(*) AS points,
+                      MIN(timestamp) AS start_ts,
+                      MAX(timestamp) AS end_ts,
+                      MAX(id) AS last_id
+               FROM locations WHERE device = ?
+               GROUP BY COALESCE(session, 'legacy')
+               ORDER BY last_id DESC""",
+            (device,),
+        ).fetchall()
+    return [
+        {
+            "session": r["session"],
+            "points": r["points"],
+            "start_ts": r["start_ts"],
+            "end_ts": r["end_ts"],
+        }
+        for r in rows
+    ]
 
 
 def get_recent_events(device: str, limit: int = 50) -> dict[str, list]:

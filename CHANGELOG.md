@@ -4,6 +4,16 @@
 
 ### New features
 
+- **Tracking sessions.** Every `start()` begins a new session: the SDK stamps a
+  `sessionId` (UUID, stable across process restarts mid-run) on each location.
+  The companion server groups points per session (`GET /sessions/{device}`,
+  `GET /locations/{device}?session=…`; pre-session points stay reachable under
+  `legacy`), and the dashboard now shows **one tracking run at a time** — the
+  newest live (auto-rolling into new runs as they start), older ones as static
+  history — instead of one ever-growing trace since the first day of use.
+- **Dashboard redesigned.** Professional full-height sidebar (device + session
+  pickers, stat tiles, speed sparkline, activity feed), floating map controls,
+  refreshed dark/light themes.
 - **Fixed-lag track smoothing (`smoothingLag`).** Each emitted/persisted point is
   re-estimated using up to `lag` future (and past) fixes before release —
   near-offline track quality at the cost of `lag` fixes of emission latency

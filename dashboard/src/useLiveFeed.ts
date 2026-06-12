@@ -6,6 +6,7 @@ import type {
   DrivingEvent,
   FeedItem,
   GeoLocation,
+  SessionInfo,
   TripEvent,
   VisitEvent,
   VisitMarker,
@@ -23,6 +24,11 @@ interface LiveState {
   devices: DeviceInfo[];
   device: string | null;
   selectDevice: (d: string) => void;
+  sessions: SessionInfo[];
+  session: string | null;
+  /** True while the selected session is the device's newest (receiving live fixes). */
+  liveSession: boolean;
+  selectSession: (s: string) => void;
   path: GeoLocation[];
   last: GeoLocation | null;
   visits: VisitMarker[];
@@ -31,41 +37,74 @@ interface LiveState {
 
 /**
  * Subscribes to the backend WebSocket and tracks one selected device's live
- * path, visit markers and event feed. On select (or first load) it fetches that
- * device's history so the map and feed aren't empty. Auto-reconnects.
+ * path, visit markers and event feed — scoped to one tracking SESSION at a
+ * time (the SDK stamps a fresh sessionId per start()), so the map shows a
+ * single run instead of every point ever recorded. Selecting the newest
+ * session follows live fixes and auto-rolls into new runs as they start;
+ * older sessions render as static history. Auto-reconnects.
  */
 export function useLiveFeed(): LiveState {
   const [connected, setConnected] = useState(false);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [device, setDevice] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [session, setSession] = useState<string | null>(null);
+  const [liveSession, setLiveSession] = useState(true);
   const [path, setPath] = useState<GeoLocation[]>([]);
   const [last, setLast] = useState<GeoLocation | null>(null);
   const [visits, setVisits] = useState<VisitMarker[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
 
-  // Keep the selected device readable inside the WS handler without reconnecting.
+  // Readable inside the WS handler without reconnecting.
   const deviceRef = useRef<string | null>(null);
+  const sessionRef = useRef<string | null>(null);
+  const liveRef = useRef(true);
   useEffect(() => {
     deviceRef.current = device;
   }, [device]);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    liveRef.current = liveSession;
+  }, [liveSession]);
 
   const pushFeed = useCallback((item: FeedItem) => {
     setFeed((prev) => [item, ...prev].slice(0, 100));
   }, []);
 
-  // Load a device's history (path + visits + events) when it becomes selected.
-  const loadDevice = useCallback(async (dev: string) => {
+  const refreshSessions = useCallback(async (dev: string): Promise<SessionInfo[]> => {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${dev}`).then((r) => r.json());
+      // Defensive: an older backend (no /sessions route) answers a JSON object.
+      const list: SessionInfo[] = Array.isArray(res) ? res : [];
+      setSessions(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const loadPath = useCallback(async (dev: string, sess: string | null) => {
     setPath([]);
-    setVisits([]);
-    setFeed([]);
     setLast(null);
     try {
-      const locs: GeoLocation[] = await fetch(`${API_BASE}/locations/${dev}`).then((r) =>
-        r.json()
-      );
+      const url =
+        sess != null
+          ? `${API_BASE}/locations/${dev}?session=${encodeURIComponent(sess)}`
+          : `${API_BASE}/locations/${dev}`;
+      const locs: GeoLocation[] = await fetch(url).then((r) => r.json());
       setPath(locs);
       setLast(locs[locs.length - 1] ?? null);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
+  const loadEvents = useCallback(async (dev: string) => {
+    setVisits([]);
+    setFeed([]);
+    try {
       const events: EventsResponse = await fetch(`${API_BASE}/events/${dev}`).then((r) =>
         r.json()
       );
@@ -104,12 +143,40 @@ export function useLiveFeed(): LiveState {
     }
   }, []);
 
+  // Select a device: newest session becomes active (live mode).
+  const loadDevice = useCallback(
+    async (dev: string) => {
+      const list = await refreshSessions(dev);
+      const newest = list[0]?.session ?? null;
+      setSession(newest);
+      sessionRef.current = newest;
+      setLiveSession(true);
+      liveRef.current = true;
+      await Promise.all([loadPath(dev, newest), loadEvents(dev)]);
+    },
+    [refreshSessions, loadPath, loadEvents]
+  );
+
   const selectDevice = useCallback(
     (dev: string) => {
       setDevice(dev);
       loadDevice(dev);
     },
     [loadDevice]
+  );
+
+  const selectSession = useCallback(
+    (sess: string) => {
+      const dev = deviceRef.current;
+      if (!dev) return;
+      setSession(sess);
+      sessionRef.current = sess;
+      const isNewest = sessions[0]?.session === sess;
+      setLiveSession(isNewest);
+      liveRef.current = isNewest;
+      loadPath(dev, sess);
+    },
+    [sessions, loadPath]
   );
 
   // Poll the device list so new devices appear in the selector.
@@ -151,13 +218,23 @@ export function useLiveFeed(): LiveState {
       ws.onmessage = (ev) => {
         const msg: WsMessage = JSON.parse(ev.data);
         const sel = deviceRef.current;
-        // Adopt the first device we see if none selected yet.
-        if (!sel) return;
-        if (msg.device !== sel) return;
+        if (!sel || msg.device !== sel) return;
 
         if (msg.type === 'location') {
-          setLast(msg.location);
-          setPath((prev) => [...prev, msg.location].slice(-5000));
+          const sid = msg.location.sessionId ?? 'legacy';
+          if (sid === sessionRef.current) {
+            setLast(msg.location);
+            setPath((prev) => [...prev, msg.location].slice(-5000));
+          } else if (liveRef.current) {
+            // A new tracking run just started while we were following the
+            // latest one: roll into it (fresh trace) and refresh the list.
+            setSession(sid);
+            sessionRef.current = sid;
+            setPath([msg.location]);
+            setLast(msg.location);
+            refreshSessions(sel);
+          }
+          // Viewing an older session: history stays static; ignore live fixes.
         } else if (msg.type === 'trip') {
           const t = msg.event.trip ?? {};
           pushFeed({
@@ -192,7 +269,20 @@ export function useLiveFeed(): LiveState {
       clearTimeout(retry);
       ws?.close();
     };
-  }, [pushFeed]);
+  }, [pushFeed, refreshSessions]);
 
-  return { connected, devices, device, selectDevice, path, last, visits, feed };
+  return {
+    connected,
+    devices,
+    device,
+    selectDevice,
+    sessions,
+    session,
+    liveSession,
+    selectSession,
+    path,
+    last,
+    visits,
+    feed,
+  };
 }

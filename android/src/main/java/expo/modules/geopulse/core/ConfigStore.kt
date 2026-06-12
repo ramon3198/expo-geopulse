@@ -37,9 +37,22 @@ class ConfigStore(
     return map.entries.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
   }
 
+  /**
+   * The current tracking session id: a fresh UUID per `start()` (including the
+   * boot-resume start), persisted so a cold process restart of the service or
+   * sync worker mid-run continues the SAME logical session instead of
+   * fragmenting it.
+   */
+  fun saveSessionId(id: String) {
+    prefs.edit().putString(KEY_SESSION, id).apply()
+  }
+
+  fun loadSessionId(): String? = prefs.getString(KEY_SESSION, null)
+
   companion object {
     private const val PREFS_NAME = "geopulse_prefs"
     private const val KEY_CONFIG = "config"
     private const val KEY_AUTH_HEADERS = "auth_headers"
+    private const val KEY_SESSION = "session_id"
   }
 }
