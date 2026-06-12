@@ -7,14 +7,17 @@ import { useTheme } from './ThemeProvider';
 
 interface Props {
   last: Location | null;
-  path: Array<[number, number]>; // [lng, lat]
+  path: Array<[number, number]>; // [lng, lat] — filtered track
+  /** Optional pre-filter chip track (from `debugIncludeRaw`), drawn dashed. */
+  rawPath?: Array<[number, number]>;
 }
 
 /**
  * Lightweight live map embedded via a WebView running MapLibre GL JS with free
  * CARTO tiles (no Google Maps key, no native map SDK). The HTML loads once;
  * location/path updates — and dark/light style swaps — are pushed in with
- * injectJavaScript so it never reloads.
+ * injectJavaScript so it never reloads. When a raw path is provided it draws
+ * dashed under the filtered route, for A/B-ing the fusion in the field.
  */
 const HTML = `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -27,21 +30,30 @@ const HTML = `<!doctype html><html><head>
     light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
   };
   const LINE = { dark: '#38bdf8', light: '#0284c7' };
+  const RAW_LINE = { dark: '#94a3b8', light: '#64748b' };
   let themeName = 'dark';
   const map = new maplibregl.Map({
     container: 'map', style: STYLES.dark,
     center: [-89.2182, 13.6929], zoom: 14, attributionControl: false
   });
   let marker = null, ready = false, pending = null;
-  let lastPath = [];
-  function addRouteLayer() {
-    map.addSource('route', { type:'geojson', data:{type:'Feature',geometry:{type:'LineString',coordinates:lastPath}}});
+  let lastPath = [], lastRawPath = [];
+  function lineData(coords) {
+    return {type:'Feature',geometry:{type:'LineString',coordinates:coords}};
+  }
+  function addRouteLayers() {
+    map.addSource('rawroute', { type:'geojson', data: lineData(lastRawPath) });
+    map.addLayer({ id:'rawroute', type:'line', source:'rawroute',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':RAW_LINE[themeName],'line-width':3,'line-opacity':0.7,
+             'line-dasharray':[1.5,1.5]}});
+    map.addSource('route', { type:'geojson', data: lineData(lastPath) });
     map.addLayer({ id:'route', type:'line', source:'route',
       layout:{'line-cap':'round','line-join':'round'},
       paint:{'line-color':LINE[themeName],'line-width':4,'line-opacity':0.9}});
   }
   map.on('load', () => {
-    addRouteLayer();
+    addRouteLayers();
     ready = true;
     if (pending) { window.gpUpdate(pending); pending = null; }
   });
@@ -50,7 +62,12 @@ const HTML = `<!doctype html><html><head>
     if (d.path) {
       lastPath = d.path;
       const src = map.getSource('route');
-      if (src) src.setData({type:'Feature',geometry:{type:'LineString',coordinates:d.path}});
+      if (src) src.setData(lineData(d.path));
+    }
+    if (d.rawPath) {
+      lastRawPath = d.rawPath;
+      const src = map.getSource('rawroute');
+      if (src) src.setData(lineData(d.rawPath));
     }
     if (d.last) {
       const ll = [d.last.lng, d.last.lat];
@@ -63,17 +80,17 @@ const HTML = `<!doctype html><html><head>
     }
   };
   // Swap tiles to match the app theme. setStyle drops custom sources/layers, so
-  // the route is re-added once the new style finishes loading (markers survive).
+  // the routes are re-added once the new style finishes loading (markers survive).
   window.gpSetTheme = function(name) {
     if (name === themeName) return;
     themeName = name;
     document.body.style.background = name === 'dark' ? '#0b1220' : '#e8ecf2';
     map.setStyle(STYLES[name]);
-    map.once('style.load', addRouteLayer);
+    map.once('style.load', addRouteLayers);
   };
 </script></body></html>`;
 
-export function MiniMap({ last, path }: Props) {
+export function MiniMap({ last, path, rawPath }: Props) {
   const { theme } = useTheme();
   const webRef = useRef<WebView>(null);
   const [loaded, setLoaded] = useState(false);
@@ -82,8 +99,9 @@ export function MiniMap({ last, path }: Props) {
     const data: Record<string, unknown> = {};
     if (last) data.last = { lat: last.coords.latitude, lng: last.coords.longitude };
     if (path.length) data.path = path;
+    if (rawPath?.length) data.rawPath = rawPath;
     return JSON.stringify(data);
-  }, [last, path]);
+  }, [last, path, rawPath]);
 
   // Push updates into the page (after it has loaded) without reloading.
   useEffect(() => {

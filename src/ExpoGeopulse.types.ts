@@ -144,6 +144,26 @@ export interface GeoPulseConfig {
    * sub-meter source (RTK) keeps its real accuracy instead of being degraded.
    */
   minKalmanAccuracy?: number;
+  /**
+   * Fixed-lag smoothing: re-estimate each emitted/persisted point using this
+   * many FUTURE fixes (and as many past ones) before releasing it — near
+   * offline-quality tracks at the cost of `lag` fixes of emission latency
+   * (host-tested ~49% tighter RMSE at lag 3). `0` (default) = off. Geofences,
+   * trips and driving detection always run on the live fix, never delayed.
+   */
+  smoothingLag?: number;
+  /**
+   * Debug: attach the pre-filter chip coordinates as `raw` on every filtered
+   * location, to A/B the fusion settings in the field (e.g. draw both paths).
+   */
+  debugIncludeRaw?: boolean;
+  /**
+   * Scale the accuracy fed to the fusion filter by live GNSS signal quality
+   * (satellites used + average C/N0), so urban canyons and indoor fixes are
+   * trusted less even when the chip keeps reporting optimistic accuracy.
+   * Piggybacks on the already-powered GNSS engine — no extra battery.
+   */
+  gnssQualityGating?: boolean;
 
   // --- lifecycle ---
   /**
@@ -264,6 +284,11 @@ export interface Location {
   isMock?: boolean;
   /** Quality score 0–100, driven by accuracy and Kalman filtering. */
   confidence?: number;
+  /**
+   * Pre-filter chip coordinates, attached only with `debugIncludeRaw` — for
+   * A/B-ing the fusion settings against the raw track in the field.
+   */
+  raw?: { latitude: number; longitude: number; accuracy: number };
   extras?: Record<string, unknown>;
 }
 

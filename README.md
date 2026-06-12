@@ -251,7 +251,7 @@ if (p.level === 'foregroundOnly') {
 `onLocation` · `onMotionChange` · `onActivityChange` · `onGeofence` · `onProviderChange` · `onHeartbeat` · `onError` · `onVisit` · `onTrip` · `onDrivingEvent` · `onSyncError`
 
 ### Config highlights
-`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `preset` (`eco|standard|high`) · `lowBatteryThreshold` · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `disableMockLocations` · `outageThreshold` · `enableTripDetection` / `visitRadius` / `minVisitDwell` · `enableKalman` / `enableCvKalman` · `accuracyFilter` / `defaultAccuracy` / `minKalmanAccuracy` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` / `maxRecordsToPersist` / `syncOnWifiOnly` / `syncRequiresBatteryNotLow` / `bufferOverflowPolicy` / `discardStatusCodes` / `retryStatusCodes` · `notification`.
+`desiredAccuracy` (`Accuracy.High|Balanced|Low|Passive`) · `preset` (`eco|standard|high`) · `lowBatteryThreshold` · `distanceFilter` · `locationUpdateInterval` · `stopOnStationary` · `disableMockLocations` · `outageThreshold` · `enableTripDetection` / `visitRadius` / `minVisitDwell` · `enableKalman` / `enableCvKalman` / `smoothingLag` / `gnssQualityGating` / `debugIncludeRaw` · `accuracyFilter` / `defaultAccuracy` / `minKalmanAccuracy` · `startOnBoot` · `url` / `httpMethod` / `headers` / `params` / `autoSync` / `maxBatchSize` / `maxRecordsToPersist` / `syncOnWifiOnly` / `syncRequiresBatteryNotLow` / `bufferOverflowPolicy` / `discardStatusCodes` / `retryStatusCodes` · `notification`.
 
 ---
 

@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.location.GnssStatus
+import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,6 +20,7 @@ import expo.modules.geopulse.core.PermissionsManager
 import expo.modules.geopulse.driving.DrivingEventsManager
 import expo.modules.geopulse.location.LocationEngine
 import expo.modules.geopulse.motion.MotionManager
+import expo.modules.geopulse.util.GnssQuality
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -198,17 +201,67 @@ class LocationService : Service() {
       onFixReceived()
       GeoPulseController.onLocationUpdate(location)
     }
+    startGnssMonitor()
   }
 
   private fun pauseLocationUpdates() {
     paused = true
     locationGeneration.incrementAndGet() // invalidate the active callback
     engine?.stop()
+    stopGnssMonitor()
+  }
+
+  // ---- GNSS signal-quality monitor (config gnssQualityGating) ----
+
+  // Feeds GeoPulseController.gnssAccuracyInflation from the live constellation
+  // health (satellites used + avg C/N0). Piggybacks on the GNSS engine our own
+  // location request already keeps powered — no extra battery.
+  private var gnssCallback: GnssStatus.Callback? = null
+
+  private fun startGnssMonitor() {
+    if (!GeoPulseController.config.gnssQualityGating || gnssCallback != null) return
+    val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+    val callback =
+      object : GnssStatus.Callback() {
+        override fun onSatelliteStatusChanged(status: GnssStatus) {
+          var used = 0
+          var cn0Sum = 0.0
+          for (i in 0 until status.satelliteCount) {
+            if (status.usedInFix(i)) {
+              used++
+              cn0Sum += status.getCn0DbHz(i)
+            }
+          }
+          val avgCn0 = if (used > 0) cn0Sum / used else Double.NaN
+          GeoPulseController.gnssAccuracyInflation = GnssQuality.inflationFor(used, avgCn0)
+        }
+      }
+    // SecurityException if location permission was revoked mid-session — the
+    // tracking pipeline surfaces that on its own; just skip the monitor.
+    val registered =
+      runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          lm.registerGnssStatusCallback(mainExecutor, callback)
+        } else {
+          @Suppress("DEPRECATION")
+          lm.registerGnssStatusCallback(callback, watchdogHandler)
+        }
+      }.getOrDefault(false)
+    if (registered) gnssCallback = callback
+  }
+
+  private fun stopGnssMonitor() {
+    val callback = gnssCallback ?: return
+    gnssCallback = null
+    val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    runCatching { lm?.unregisterGnssStatusCallback(callback) }
+    GeoPulseController.gnssAccuracyInflation = 1.0
   }
 
   private fun teardown() {
     watchdogHandler.removeCallbacks(watchdogTick)
     locationGeneration.incrementAndGet() // invalidate the active callback
+    stopGnssMonitor()
     motion?.stop()
     motion = null
     MotionManager.activeListener = null

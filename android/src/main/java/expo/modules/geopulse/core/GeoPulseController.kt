@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import expo.modules.geopulse.db.LocationStore
 import expo.modules.geopulse.fusion.KalmanBridge
+import expo.modules.geopulse.fusion.TrackSmoother
 import expo.modules.geopulse.geofence.GeofenceManager
 import expo.modules.geopulse.headless.GeoPulseHeadlessService
 import expo.modules.geopulse.headless.HeadlessCoalescer
@@ -98,6 +99,14 @@ object GeoPulseController {
   // Schedules window-based flushes for headless onLocation coalescing (P1-7).
   private val scheduler = Executors.newSingleThreadScheduledExecutor()
   @Volatile private var coalescer: HeadlessCoalescer<Map<String, Any?>>? = null
+
+  // Fixed-lag track smoother (config smoothingLag > 0): emitted/persisted points
+  // are re-estimated with future fixes before release. Null when off.
+  @Volatile private var smoother: TrackSmoother<Map<String, Any?>>? = null
+
+  // Accuracy inflation from GNSS signal quality, written by the LocationService's
+  // GnssStatus monitor (1.0 = healthy constellation; >1 = trust fixes less).
+  @Volatile var gnssAccuracyInflation: Double = 1.0
   private var store: LocationStore? = null
   // Auth headers refreshed by JS at runtime (setAuthHeaders) and persisted, so the
   // headless sync worker uses a live token even in a cold process. Loaded lazily.
@@ -328,6 +337,12 @@ object GeoPulseController {
     enabled = false
     synchronized(fusionLock) { fusion?.reset() }
     tripManager?.reset()
+    // Release the smoother's tail (the last `lag` fixes it was still holding)
+    // so a stop never strands the end of the route.
+    val stopCfg = config
+    smoother?.flush()?.forEach { sm ->
+      deliver(patchCoords(sm.payload, sm.lat, sm.lng), stopCfg)
+    }
     // Flush any buffered headless fixes so a graceful stop doesn't strand them.
     val ctx = appContext
     if (ctx != null) {
@@ -365,6 +380,15 @@ object GeoPulseController {
     var accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else cfg.defaultAccuracy
     var filtered = false
     var provider = location.provider ?: "fused"
+    // Chip-reported values, kept for the debugIncludeRaw A/B payload.
+    val rawLat = lat
+    val rawLng = lng
+    val rawAccuracy = accuracy
+
+    // GNSS-quality gating: in an urban canyon the chip often keeps reporting
+    // optimistic accuracy; scale what the filter sees by the constellation's
+    // actual health (written by the service's GnssStatus monitor).
+    if (cfg.gnssQualityGating) accuracy *= gnssAccuracyInflation
 
     // Doppler velocity for the CV model: usable with a bearing, or — when
     // parked — with near-zero speed, where the bearing is irrelevant and the
@@ -403,7 +427,7 @@ object GeoPulseController {
     // attaches (one fix-interval of staleness, only in this consumer-less mode).
     val hasConsumer = dispatcher != null || cfg.enableHeadless || cfg.url != null
     if (hasConsumer) {
-      val map =
+      var map =
         LocationMapper.toMap(
           location,
           isMoving,
@@ -414,11 +438,25 @@ object GeoPulseController {
           overrideAccuracy = accuracy,
           context = appContext,
         )
+      if (cfg.debugIncludeRaw && filtered) {
+        map =
+          map.toMutableMap().apply {
+            put("raw", mapOf("latitude" to rawLat, "longitude" to rawLng, "accuracy" to rawAccuracy))
+          }
+      }
+      // lastLocation tracks the LIVE fix even when smoothing delays emission.
       lastLocation = map
-      emit("onLocation", map)
 
-      if (cfg.url != null) {
-        persist(map, cfg)
+      val s = smoother
+      if (s != null && s.isActive()) {
+        // Fixed-lag smoothing: this fix is held until `lag` future ones refine
+        // it; what comes back now is an older, finalized point (or nothing
+        // while the window fills). Stop()/flush releases the tail.
+        s.add(TrackSmoother.Point(lat, lng, accuracy, map))?.let { sm ->
+          deliver(patchCoords(sm.payload, sm.lat, sm.lng), cfg)
+        }
+      } else {
+        deliver(map, cfg)
       }
     }
     feedGeofences(lat, lng)
@@ -430,6 +468,27 @@ object GeoPulseController {
     if (cfg.enableDrivingEvents && location.hasSpeed()) {
       drivingSpeedSink?.invoke(location.speed.toDouble())
     }
+  }
+
+  /** Emit a location to JS/headless and persist it for sync — one exit point. */
+  private fun deliver(
+    map: Map<String, Any?>,
+    cfg: GeoPulseConfig,
+  ) {
+    emit("onLocation", map)
+    if (cfg.url != null) persist(map, cfg)
+  }
+
+  /** Copy [map] with its coords moved to the smoothed position (rest untouched). */
+  private fun patchCoords(
+    map: Map<String, Any?>,
+    lat: Double,
+    lng: Double,
+  ): Map<String, Any?> {
+    val coords = (map["coords"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }?.toMutableMap() ?: return map
+    coords["latitude"] = lat
+    coords["longitude"] = lng
+    return map.toMutableMap().apply { put("coords", coords) }
   }
 
   /** Set by LocationService so the controller can feed GPS speed to the sensor-based detector. */
@@ -783,6 +842,7 @@ object GeoPulseController {
    * (Re)build the headless onLocation coalescer (P1-7) from the current config.
    * Null when headless is off or both coalesce knobs are 0 — then each fix is
    * delivered to the headless task immediately (backward-compatible default).
+   * Also rebuilds the fixed-lag smoother (same config-change lifecycle).
    */
   private fun rebuildCoalescer() {
     val cfg = config
@@ -792,6 +852,7 @@ object GeoPulseController {
       } else {
         null
       }
+    smoother = if (cfg.smoothingLag > 0) TrackSmoother(cfg.smoothingLag) else null
   }
 
   // ---- persistence + sync ----

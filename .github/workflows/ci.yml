@@ -71,6 +71,8 @@ jobs:
           java -jar /tmp/coalescer-test.jar
           kotlinc android/src/main/java/expo/modules/geopulse/util/GeoMath.kt android/src/main/java/expo/modules/geopulse/trip/TripVisitManager.kt tools/host-test/TripDistanceTest.kt -include-runtime -d /tmp/trip-test.jar
           java -jar /tmp/trip-test.jar
+          kotlinc android/src/main/java/expo/modules/geopulse/fusion/TrackSmoother.kt android/src/main/java/expo/modules/geopulse/util/GnssQuality.kt tools/host-test/TrackSmootherTest.kt -include-runtime -d /tmp/smoother-test.jar
+          java -jar /tmp/smoother-test.jar
 
       - name: ktlint
         run: |

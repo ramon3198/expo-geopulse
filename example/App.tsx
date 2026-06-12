@@ -49,9 +49,12 @@ export default function App() {
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
   const [log, setLog] = useState<string[]>([]);
 
-  // Path for the mini-map, kept as [lng,lat] and capped for performance.
+  // Paths for the mini-map, kept as [lng,lat] and capped for performance. The
+  // raw path (pre-filter, from debugIncludeRaw) draws dashed for A/B comparison.
   const pathRef = useRef<Array<[number, number]>>([]);
   const [path, setPath] = useState<Array<[number, number]>>([]);
+  const rawPathRef = useRef<Array<[number, number]>>([]);
+  const [rawPath, setRawPath] = useState<Array<[number, number]>>([]);
 
   const append = (line: string) =>
     setLog((p) => [`${new Date().toLocaleTimeString()}  ${line}`, ...p].slice(0, 40));
@@ -72,6 +75,10 @@ export default function App() {
         setLast(loc);
         pathRef.current.push([loc.coords.longitude, loc.coords.latitude]);
         if (pathRef.current.length > 2000) pathRef.current.shift();
+        if (loc.raw) {
+          rawPathRef.current.push([loc.raw.longitude, loc.raw.latitude]);
+          if (rawPathRef.current.length > 2000) rawPathRef.current.shift();
+        }
         append(
           `fix  ${loc.coords.latitude.toFixed(5)}, ${loc.coords.longitude.toFixed(5)}  ±${Math.round(
             loc.coords.accuracy
@@ -92,6 +99,11 @@ export default function App() {
       distanceFilter: 10,
       stopOnStationary: true,
       enableKalman: true,
+      // Field-validation build: CV model + raw A/B overlay + GNSS quality gating.
+      // The map draws the raw chip track dashed next to the filtered one.
+      enableCvKalman: true,
+      debugIncludeRaw: true,
+      gnssQualityGating: true,
       enableTripDetection: true,
       enableDrivingEvents: true,
       enableHeadless: true,
@@ -122,9 +134,10 @@ export default function App() {
   useEffect(() => {
     const id = setInterval(() => {
       if (pathRef.current.length !== path.length) setPath([...pathRef.current]);
+      if (rawPathRef.current.length !== rawPath.length) setRawPath([...rawPathRef.current]);
     }, 2000);
     return () => clearInterval(id);
-  }, [path.length]);
+  }, [path.length, rawPath.length]);
 
   // Poll the local sync queue size while tracking.
   useEffect(() => {
@@ -262,8 +275,8 @@ export default function App() {
           />
         </View>
 
-        {/* Live mini-map */}
-        <MiniMap last={last} path={path} />
+        {/* Live mini-map (solid = filtered, dashed = raw chip track) */}
+        <MiniMap last={last} path={path} rawPath={rawPath} />
 
         {/* Live stats */}
         <View style={styles.statsRow}>

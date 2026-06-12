@@ -73,6 +73,18 @@ class GeoPulseConfig : Record {
   // chips that over-state precision; lower it (e.g. 0.1) so sub-meter sources
   // (RTK) keep their real accuracy instead of being degraded 10x.
   @Field var minKalmanAccuracy: Double = 1.0
+  // Fixed-lag smoothing: re-estimate each emitted/persisted point with this many
+  // FUTURE fixes (and as many past ones) before releasing it. Near-offline track
+  // quality at the cost of `lag` fixes of emission latency. 0 = off. Geofences,
+  // trips and driving detection always run on the live fix, never delayed.
+  @Field var smoothingLag: Int = 0
+  // Debug: attach the pre-filter coordinates as `raw {latitude,longitude,accuracy}`
+  // on every filtered location, for A/B-ing the fusion settings in the field.
+  @Field var debugIncludeRaw: Boolean = false
+  // Scale the accuracy fed to the fusion filter by GNSS signal quality
+  // (satellites used + avg C/N0), so urban canyons / indoors are trusted less
+  // even when the chip keeps reporting optimistic accuracy.
+  @Field var gnssQualityGating: Boolean = false
 
   // lifecycle
   @Field var enableHeadless: Boolean = false
@@ -178,6 +190,9 @@ class GeoPulseConfig : Record {
     c.accuracyFilter = accuracyFilter
     c.defaultAccuracy = defaultAccuracy
     c.minKalmanAccuracy = minKalmanAccuracy
+    c.smoothingLag = smoothingLag
+    c.debugIncludeRaw = debugIncludeRaw
+    c.gnssQualityGating = gnssQualityGating
     c.enableHeadless = enableHeadless
     c.headlessCoalesceWindow = headlessCoalesceWindow
     c.headlessCoalesceCount = headlessCoalesceCount
@@ -228,6 +243,9 @@ class GeoPulseConfig : Record {
       "accuracyFilter" to accuracyFilter,
       "defaultAccuracy" to defaultAccuracy,
       "minKalmanAccuracy" to minKalmanAccuracy,
+      "smoothingLag" to smoothingLag,
+      "debugIncludeRaw" to debugIncludeRaw,
+      "gnssQualityGating" to gnssQualityGating,
       "enableHeadless" to enableHeadless,
       "headlessCoalesceWindow" to headlessCoalesceWindow,
       "headlessCoalesceCount" to headlessCoalesceCount,
@@ -290,6 +308,9 @@ class GeoPulseConfig : Record {
     (map["accuracyFilter"] as? Number)?.let { accuracyFilter = it.toDouble() }
     (map["defaultAccuracy"] as? Number)?.let { defaultAccuracy = it.toDouble() }
     (map["minKalmanAccuracy"] as? Number)?.let { minKalmanAccuracy = it.toDouble() }
+    (map["smoothingLag"] as? Number)?.let { smoothingLag = it.toInt() }
+    (map["debugIncludeRaw"] as? Boolean)?.let { debugIncludeRaw = it }
+    (map["gnssQualityGating"] as? Boolean)?.let { gnssQualityGating = it }
     (map["enableHeadless"] as? Boolean)?.let { enableHeadless = it }
     (map["headlessCoalesceWindow"] as? Number)?.let { headlessCoalesceWindow = it.toLong() }
     (map["headlessCoalesceCount"] as? Number)?.let { headlessCoalesceCount = it.toInt() }

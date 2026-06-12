@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- **Fixed-lag track smoothing (`smoothingLag`).** Each emitted/persisted point is
+  re-estimated using up to `lag` future (and past) fixes before release —
+  near-offline track quality at the cost of `lag` fixes of emission latency
+  (host-tested: **~49% tighter RMSE** at lag 3 on a noisy straight track).
+  Geofences, trips and driving detection always run on the live fix, never
+  delayed; `stop()` flushes the held tail. Off by default.
+- **GNSS signal-quality gating (`gnssQualityGating`).** The accuracy fed to the
+  fusion filter is scaled by the live constellation health (satellites used +
+  average C/N0), so urban-canyon and indoor fixes are trusted less even when the
+  chip keeps reporting optimistic accuracy. Piggybacks on the GNSS engine the
+  location request already keeps powered — no extra battery. Off by default.
+- **Raw-track A/B overlay (`debugIncludeRaw`).** Every filtered location can
+  carry the pre-filter chip coordinates as `raw {latitude, longitude, accuracy}`
+  — the example app draws both tracks on the live map (solid = filtered,
+  dashed = raw) so fusion settings like `enableCvKalman` can be validated in the
+  field at a glance. Debug aid, off by default.
+
 ## 0.8.0
 
 ### New features
