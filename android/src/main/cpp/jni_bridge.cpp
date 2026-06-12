@@ -10,10 +10,11 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_expo_modules_geopulse_fusion_KalmanBridge_nativeCreate(
-    JNIEnv*, jobject, jboolean enableKalman, jdouble accuracyFilter,
-    jdouble maxSpeed, jdouble processNoise) {
+    JNIEnv*, jobject, jboolean enableKalman, jboolean useCvModel,
+    jdouble accuracyFilter, jdouble maxSpeed, jdouble processNoise) {
   FusionConfig cfg;
   cfg.enableKalman = enableKalman == JNI_TRUE;
+  cfg.useCvModel = useCvModel == JNI_TRUE;
   cfg.accuracyFilter = accuracyFilter;
   cfg.maxSpeedMps = maxSpeed;
   cfg.processNoise = processNoise;
@@ -27,16 +28,35 @@ Java_expo_modules_geopulse_fusion_KalmanBridge_nativeReset(JNIEnv*, jobject, jlo
 }
 
 JNIEXPORT void JNICALL
+Java_expo_modules_geopulse_fusion_KalmanBridge_nativeSetMotionProfile(
+    JNIEnv*, jobject, jlong handle, jdouble processNoise, jdouble maxSpeed) {
+  auto* fusion = reinterpret_cast<SensorFusion*>(handle);
+  if (fusion != nullptr) fusion->setMotionProfile(processNoise, maxSpeed);
+}
+
+JNIEXPORT void JNICALL
+Java_expo_modules_geopulse_fusion_KalmanBridge_nativeSetMinAccuracy(
+    JNIEnv*, jobject, jlong handle, jdouble minAccuracy) {
+  auto* fusion = reinterpret_cast<SensorFusion*>(handle);
+  if (fusion != nullptr) fusion->setMinAccuracy(minAccuracy);
+}
+
+JNIEXPORT void JNICALL
 Java_expo_modules_geopulse_fusion_KalmanBridge_nativeDestroy(JNIEnv*, jobject, jlong handle) {
   auto* fusion = reinterpret_cast<SensorFusion*>(handle);
   delete fusion;
 }
 
-/** Returns a double[5]: { accepted, filtered, latitude, longitude, accuracy }. */
+/**
+ * Returns a double[5]: { accepted, filtered, latitude, longitude, accuracy }.
+ * [hasVelocity] marks speed/bearing/speedAccuracy as valid doppler data for the
+ * CV model (ignored by the scalar filter).
+ */
 JNIEXPORT jdoubleArray JNICALL
 Java_expo_modules_geopulse_fusion_KalmanBridge_nativeProcess(
     JNIEnv* env, jobject, jlong handle, jdouble latitude, jdouble longitude,
-    jdouble accuracy, jlong timestampMs) {
+    jdouble accuracy, jlong timestampMs, jboolean hasVelocity, jdouble speedMps,
+    jdouble bearingDeg, jdouble speedAccuracyMps) {
   auto* fusion = reinterpret_cast<SensorFusion*>(handle);
   jdouble result[5];
   if (fusion == nullptr) {
@@ -46,7 +66,10 @@ Java_expo_modules_geopulse_fusion_KalmanBridge_nativeProcess(
     result[3] = longitude;
     result[4] = accuracy;
   } else {
-    FusionOutput out = fusion->process(latitude, longitude, accuracy, timestampMs);
+    FusionOutput out =
+        fusion->process(latitude, longitude, accuracy, timestampMs,
+                        hasVelocity == JNI_TRUE, speedMps, bearingDeg,
+                        speedAccuracyMps);
     result[0] = out.accepted ? 1.0 : 0.0;
     result[1] = out.filtered ? 1.0 : 0.0;
     result[2] = out.latitude;

@@ -9,6 +9,7 @@ package expo.modules.geopulse.fusion
  */
 class KalmanBridge(
   enableKalman: Boolean,
+  useCvModel: Boolean,
   accuracyFilter: Double,
   maxSpeed: Double,
   processNoise: Double,
@@ -21,18 +22,27 @@ class KalmanBridge(
     val accuracy: Double,
   )
 
-  private var handle: Long = nativeCreate(enableKalman, accuracyFilter, maxSpeed, processNoise)
+  private var handle: Long = nativeCreate(enableKalman, useCvModel, accuracyFilter, maxSpeed, processNoise)
 
+  /**
+   * Run a fix through the native pipeline. [hasVelocity] marks the doppler
+   * params (speed m/s, compass bearing deg, speed accuracy m/s) as valid — the
+   * CV model fuses them; the scalar filter ignores them.
+   */
   fun process(
     latitude: Double,
     longitude: Double,
     accuracy: Double,
     timestampMs: Long,
+    hasVelocity: Boolean = false,
+    speedMps: Double = 0.0,
+    bearingDeg: Double = 0.0,
+    speedAccuracyMps: Double = -1.0,
   ): Result {
     // Defensive: never call into a destroyed handle (callers serialize this, but
     // a 0 handle must pass the fix through rather than crash the native layer).
     if (handle == 0L) return Result(accepted = true, filtered = false, latitude, longitude, accuracy)
-    val a = nativeProcess(handle, latitude, longitude, accuracy, timestampMs)
+    val a = nativeProcess(handle, latitude, longitude, accuracy, timestampMs, hasVelocity, speedMps, bearingDeg, speedAccuracyMps)
     return Result(
       accepted = a[0] != 0.0,
       filtered = a[1] != 0.0,
@@ -46,6 +56,26 @@ class KalmanBridge(
     if (handle != 0L) nativeReset(handle)
   }
 
+  /**
+   * Activity-adaptive tuning: adjust the Kalman process noise (m/s) and the
+   * outlier gate's max speed (m/s) for the current motion type. Non-positive
+   * values leave the respective knob unchanged.
+   */
+  fun setMotionProfile(
+    processNoise: Double,
+    maxSpeed: Double,
+  ) {
+    if (handle != 0L) nativeSetMotionProfile(handle, processNoise, maxSpeed)
+  }
+
+  /**
+   * Floor on each fix's reported accuracy (m). 1.0 by default; lower it to let
+   * sub-meter sources (RTK) keep their real precision. Ignores values <= 0.
+   */
+  fun setMinAccuracy(minAccuracyMeters: Double) {
+    if (handle != 0L) nativeSetMinAccuracy(handle, minAccuracyMeters)
+  }
+
   fun destroy() {
     if (handle != 0L) {
       nativeDestroy(handle)
@@ -55,6 +85,7 @@ class KalmanBridge(
 
   private external fun nativeCreate(
     enableKalman: Boolean,
+    useCvModel: Boolean,
     accuracyFilter: Double,
     maxSpeed: Double,
     processNoise: Double,
@@ -66,9 +97,24 @@ class KalmanBridge(
     longitude: Double,
     accuracy: Double,
     timestampMs: Long,
+    hasVelocity: Boolean,
+    speedMps: Double,
+    bearingDeg: Double,
+    speedAccuracyMps: Double,
   ): DoubleArray
 
   private external fun nativeReset(handle: Long)
+
+  private external fun nativeSetMotionProfile(
+    handle: Long,
+    processNoise: Double,
+    maxSpeed: Double,
+  )
+
+  private external fun nativeSetMinAccuracy(
+    handle: Long,
+    minAccuracy: Double,
+  )
 
   private external fun nativeDestroy(handle: Long)
 

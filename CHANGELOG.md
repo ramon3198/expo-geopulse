@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.8.0
+
+### New features
+
+- **Constant-velocity Kalman model (`enableCvKalman`).** An opt-in upgrade of
+  the fusion filter with a velocity state: it predicts through motion instead of
+  trailing behind it, and fuses the GPS chip's doppler velocity (speed/bearing)
+  — including a zero-speed pin that kills stationary wander. Host benchmarks at
+  15 m/s with ±8 m noise: scalar 33.5 m RMSE → CV 8.1 m → **CV + doppler 2.2 m**
+  (15×), while matching the scalar filter when parked. Off by default until
+  field-validated; flip it with `enableCvKalman: true`.
+- **Configurable accuracy floors** for high-precision sources: `minKalmanAccuracy`
+  (default `1.0` m — guards against chips over-stating precision) can be lowered
+  so a sub-meter source (RTK) keeps its real accuracy (host-tested: a ±0.2 m
+  source reports 0.19 m with floor 0.1 vs 0.62 m with the default), and
+  `defaultAccuracy` (default `30` m) controls what is assumed for the rare fix
+  that reports no accuracy at all.
+- **Activity-adaptive GPS fusion.** The Kalman filter now tunes itself from the
+  detected activity: process noise drops to 0.5 m/s while `still` (host-tested
+  **~51% tighter stationary RMSE** vs the one-size-fits-all 3.0) and rises to
+  8 m/s `in_vehicle` so the filter stops lagging behind a car in turns. The
+  outlier gate is activity-aware too (pedestrian 40 m/s — still catches
+  multipath teleports — vs vehicle 100 m/s; generous on purpose, since activity
+  recognition lags transitions by 10–60 s and must never reject real motion).
+- **Accuracy-aware outlier gate (5σ).** A jump is now rejected only when it is
+  both implausible given the two fixes' combined reported accuracy (beyond 5σ)
+  *and* faster than the activity's max speed — previously a noisy pair of ±25 m
+  fixes could be dropped for a 40 m apparent "jump" that was just noise the
+  filter would have smoothed anyway.
+- **Sync constraint options.** `syncOnWifiOnly` restricts uploads to unmetered
+  networks (queued batches wait for Wi-Fi — protects capped mobile plans from
+  multi-MB backlogs), and `syncRequiresBatteryNotLow` defers uploads while the
+  battery is low. Both default off (current behavior).
+- **Safety-net periodic drain.** While a sync `url` is configured, a 15-minute
+  network-constrained periodic worker sweeps any backlog that has no pending
+  one-shot work — `autoSync: false` setups, an enqueue lost to a crash, or
+  points recorded offline before the process died. No-ops fast on an empty
+  buffer; cancelled automatically when sync is unconfigured.
+- **Expedited uploads on Android 12+.** Auto-sync work is marked expedited so
+  Doze runs it within seconds instead of deferring it for minutes-to-hours
+  (degrades gracefully to a normal request when the expedited quota is spent;
+  skipped with `syncRequiresBatteryNotLow`, which expedited work doesn't allow).
+- **Sync gives up loudly instead of retrying silently for hours.** After ~30 min
+  of exponential backoff (6 attempts) against a failing backend, the worker
+  emits `onError` `SYNC_ABANDONED` (`status` + `attempts`) and stops; points
+  stay buffered and the next sync trigger — including the periodic drain —
+  starts a fresh cycle.
+
+### Fixes
+
+- **The tail of a route now uploads after `stop()`.** Stopping tracking enqueues
+  a final sync flush — previously the last buffered points sat in the queue
+  until the app was next opened (auto-sync only fires per fix, and fixes had
+  just stopped).
+- **A backlog now drains after a reboot even with `startOnBoot: false`.** The
+  boot receiver previously only acted when resuming tracking; un-synced points
+  recorded before the reboot stayed orphaned until the app was manually opened.
+- **HTTP 413 no longer discards the batch.** A too-large payload now halves the
+  batch and retries immediately until it fits; only a single point that still
+  413s is dropped (genuinely poisonous). Previously the whole batch was lost.
+- **Transient connection blips retry in-line.** A request that got no HTTP
+  response at all (DNS hiccup, socket reset) is retried once after 250 ms before
+  falling back to WorkManager's 30 s+ backoff. Safe even after a read timeout —
+  the dedup-by-uuid contract absorbs a re-sent batch.
+- **Concurrent auth refreshes are coalesced.** A manual `sync()` racing the 401
+  recovery now awaits the in-flight `registerAuthProvider` refresh instead of
+  skipping it and uploading with the stale token; the provider is never invoked
+  twice in parallel.
+- **`track()` only sends the options you pass** instead of `undefined`
+  placeholders that relied on the native merge to skip them.
+
 ## 0.7.0
 
 ### Breaking

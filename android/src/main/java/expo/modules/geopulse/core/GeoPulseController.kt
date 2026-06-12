@@ -6,9 +6,7 @@ import android.location.Location
 import android.os.Build
 import android.os.SystemClock
 import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import expo.modules.geopulse.db.LocationStore
@@ -145,6 +143,7 @@ object GeoPulseController {
       }
     rebuildFusion()
     rebuildCoalescer()
+    reconcilePeriodicDrain()
     persistConfig(applied)
   }
 
@@ -175,6 +174,7 @@ object GeoPulseController {
       }
     rebuildFusion()
     rebuildCoalescer()
+    reconcilePeriodicDrain()
     // Persist the config we just set — never a transient eco that a concurrent
     // battery auto-degrade may have written to the live field after the lock.
     persistConfig(applied)
@@ -200,6 +200,11 @@ object GeoPulseController {
     config = GeoPulseConfig.fromMap(map)
     rebuildFusion()
     rebuildCoalescer()
+    reconcilePeriodicDrain()
+    // Drain any backlog that survived the reboot regardless of startOnBoot —
+    // "resume tracking" and "upload what was already recorded" are independent
+    // concerns. No-ops when the buffer is empty or no url is configured.
+    if (config.url != null) enqueueSync()
     if (config.startOnBoot) start()
   }
 
@@ -218,6 +223,7 @@ object GeoPulseController {
       config = GeoPulseConfig.fromMap(it)
       rebuildFusion()
       rebuildCoalescer()
+      reconcilePeriodicDrain()
     }
   }
 
@@ -327,6 +333,10 @@ object GeoPulseController {
     if (ctx != null) {
       coalescer?.drainNow()?.let { dispatchHeadless(ctx, "onLocation", Json.toJson(it)) }
     }
+    // Final sync flush: without this the tail of the route sits in the buffer
+    // until the app next opens (autoSync only fires per-fix, and fixes just
+    // stopped). The worker no-ops if the buffer is empty; KEEP dedupes.
+    if (config.url != null) enqueueSync()
   }
 
   // ---- location pipeline ----
@@ -352,11 +362,24 @@ object GeoPulseController {
 
     var lat = location.latitude
     var lng = location.longitude
-    var accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else 30.0
+    var accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else cfg.defaultAccuracy
     var filtered = false
     var provider = location.provider ?: "fused"
 
-    val r = fuse(lat, lng, accuracy, location.time)
+    // Doppler velocity for the CV model: usable with a bearing, or — when
+    // parked — with near-zero speed, where the bearing is irrelevant and the
+    // zero pins the filter's velocity state (kills stationary wander).
+    val speedMps = if (location.hasSpeed()) location.speed.toDouble() else -1.0
+    val hasVelocity = speedMps >= 0.0 && (location.hasBearing() || speedMps < 1.0)
+    val bearingDeg = if (location.hasBearing()) location.bearing.toDouble() else 0.0
+    val speedAccuracyMps =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
+        location.speedAccuracyMetersPerSecond.toDouble()
+      } else {
+        -1.0
+      }
+
+    val r = fuse(lat, lng, accuracy, location.time, hasVelocity, speedMps.coerceAtLeast(0.0), bearingDeg, speedAccuracyMps)
     if (r != null) {
       if (!r.accepted) return // outlier or below accuracy threshold -> drop
       lat = r.latitude
@@ -561,7 +584,32 @@ object GeoPulseController {
     confidence: Int,
   ) {
     emit("onActivityChange", mapOf("activity" to type, "confidence" to confidence))
+    // Activity-adaptive fusion tuning: a still device gets strong smoothing, a
+    // vehicle a filter that doesn't fight it (less lag in turns).
+    val profile = motionProfileFor(type)
+    lastMotionProfile = profile
+    synchronized(fusionLock) { fusion?.setMotionProfile(profile.first, profile.second) }
   }
+
+  // (processNoise m/s, maxSpeed m/s) per detected activity. q tracks how fast the
+  // device can really move; maxSpeed is the outlier gate. Pedestrian gates stay at
+  // 40 m/s on purpose: activity recognition lags transitions by 10-60 s, and a
+  // tight gate would reject every real fix of a drive still classified as walking
+  // — 40 still catches multipath teleports (typically hundreds of m/s).
+  private fun motionProfileFor(activity: String): Pair<Double, Double> =
+    when (activity) {
+      "still" -> 0.5 to 40.0
+      "walking" -> 1.2 to 40.0
+      "running" -> 2.0 to 40.0
+      "on_bicycle" -> 2.5 to 40.0
+      "in_vehicle" -> 8.0 to MAX_SPEED_MPS
+      else -> PROCESS_NOISE to MAX_SPEED_MPS
+    }
+
+  // Last applied profile, so a rebuilt fusion engine starts from the current
+  // activity instead of the defaults. Volatile: written on the motion thread,
+  // read under fusionLock on the location worker.
+  @Volatile private var lastMotionProfile: Pair<Double, Double> = PROCESS_NOISE to MAX_SPEED_MPS
 
   /** Called by the motion manager when moving<->stationary state flips. */
   fun notifyMotionChange(moving: Boolean) {
@@ -691,9 +739,13 @@ object GeoPulseController {
     lng: Double,
     accuracy: Double,
     timeMs: Long,
+    hasVelocity: Boolean = false,
+    speedMps: Double = 0.0,
+    bearingDeg: Double = 0.0,
+    speedAccuracyMps: Double = -1.0,
   ): KalmanBridge.Result? =
     synchronized(fusionLock) {
-      ensureFusion()?.process(lat, lng, accuracy, timeMs)
+      ensureFusion()?.process(lat, lng, accuracy, timeMs, hasVelocity, speedMps, bearingDeg, speedAccuracyMps)
     }
 
   /**
@@ -707,8 +759,15 @@ object GeoPulseController {
     if (!KalmanBridge.isAvailable()) return null
     val cfg = config
     return try {
-      KalmanBridge(cfg.enableKalman, cfg.accuracyFilter, MAX_SPEED_MPS, PROCESS_NOISE)
-        .also { fusion = it }
+      KalmanBridge(cfg.enableKalman, cfg.enableCvKalman, cfg.accuracyFilter, MAX_SPEED_MPS, PROCESS_NOISE)
+        .also {
+          // Start from the current activity's tuning, not the defaults — a
+          // rebuild mid-drive shouldn't fall back to fighting the vehicle.
+          val (q, maxSpeed) = lastMotionProfile
+          it.setMotionProfile(q, maxSpeed)
+          it.setMinAccuracy(cfg.minKalmanAccuracy)
+          fusion = it
+        }
     } catch (t: Throwable) {
       null
     }
@@ -815,20 +874,33 @@ object GeoPulseController {
 
   private fun enqueueSync() {
     val ctx = appContext ?: return
-    val constraints =
-      Constraints
-        .Builder()
-        .setRequiredNetworkType(NetworkType.CONNECTED)
-        .build()
-    val request =
+    val builder =
       OneTimeWorkRequestBuilder<SyncWorker>()
-        .setConstraints(constraints)
+        .setConstraints(SyncWorker.syncConstraints(config))
         .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-        .build()
+    // Expedited so Doze (Android 12+) runs the upload promptly instead of
+    // deferring it for minutes-to-hours.
+    SyncWorker.applyExpedited(builder, config)
     runCatching {
       WorkManager
         .getInstance(ctx)
-        .enqueueUniqueWork(SyncWorker.UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+        .enqueueUniqueWork(SyncWorker.UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, builder.build())
+    }
+  }
+
+  /**
+   * Keep the 15-min safety-net drain in step with the config: scheduled while a
+   * sync `url` exists (sweeps backlogs that have no pending one-shot work —
+   * autoSync off, an enqueue lost to a crash, points recorded offline before the
+   * process died), cancelled when sync is unconfigured so it doesn't tick idle.
+   */
+  private fun reconcilePeriodicDrain() {
+    val ctx = appContext ?: return
+    val cfg = config
+    if (cfg.url != null) {
+      SyncWorker.ensurePeriodicDrain(ctx, cfg)
+    } else {
+      SyncWorker.cancelPeriodicDrain(ctx)
     }
   }
 

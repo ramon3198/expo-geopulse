@@ -28,6 +28,24 @@ class GpsKalmanFilter {
   bool isInitialized() const { return variance_ >= 0.0; }
 
   /**
+   * Update the process noise at runtime (activity-adaptive tuning): a still
+   * device warrants strong smoothing (low q), a vehicle must not be fought by
+   * the filter (high q). Takes effect on the next fix; ignores q <= 0.
+   */
+  void setProcessNoise(double processNoiseMetersPerSecond) {
+    if (processNoiseMetersPerSecond > 0) q_ = processNoiseMetersPerSecond;
+  }
+
+  /**
+   * Floor applied to each fix's reported accuracy. The 1.0 m default guards
+   * against chips that over-state their precision; lower it (e.g. 0.1) to let
+   * sub-meter sources (RTK) keep their real accuracy. Ignores values <= 0.
+   */
+  void setMinAccuracy(double minAccuracyMeters) {
+    if (minAccuracyMeters > 0) minAccuracy_ = minAccuracyMeters;
+  }
+
+  /**
    * Feed a raw fix. `timestampMs` should be monotonic. `accuracyMeters` is the
    * fix's reported horizontal accuracy. Returns the smoothed position.
    */

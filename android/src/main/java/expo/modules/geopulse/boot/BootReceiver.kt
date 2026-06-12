@@ -6,8 +6,10 @@ import android.content.Intent
 import expo.modules.geopulse.core.GeoPulseController
 
 /**
- * Restarts tracking after device reboot when `startOnBoot` is enabled. Reads the
- * persisted config and re-launches the foreground service — no JS runtime needed.
+ * Runs after device reboot: drains any un-synced backlog that survived the
+ * reboot (regardless of `startOnBoot`), and restarts tracking when
+ * `startOnBoot` is enabled. Reads the persisted config and re-launches the
+ * foreground service — no JS runtime needed.
  */
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(

@@ -53,7 +53,7 @@ class GeoPulse {
   // ---- auth refresh state (see registerAuthProvider) ----
   private authProvider?: () => Promise<Record<string, string>>;
   private authErrorSub?: EventSubscription;
-  private authRefreshing = false;
+  private authRefreshPromise: Promise<boolean> | null = null;
   private lastAuthRetryAt = 0;
 
   // ---- lifecycle / tracking ----
@@ -237,19 +237,27 @@ class GeoPulse {
     void this.refreshAuth(); // prime native with a token immediately
   }
 
-  /** Invoke the provider and push the result to native. Resolves true on success. */
-  private async refreshAuth(): Promise<boolean> {
-    if (!this.authProvider || this.authRefreshing) return false;
-    this.authRefreshing = true;
-    try {
-      const headers = await this.authProvider();
-      await this.setAuthHeaders(headers);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      this.authRefreshing = false;
-    }
+  /**
+   * Invoke the provider and push the result to native. Resolves true on
+   * success. Concurrent callers (e.g. a manual `sync()` racing the 401
+   * recovery) share the in-flight refresh instead of skipping it and running
+   * with a stale token — and the provider is never invoked twice in parallel.
+   */
+  private refreshAuth(): Promise<boolean> {
+    if (!this.authProvider) return Promise.resolve(false);
+    if (this.authRefreshPromise) return this.authRefreshPromise;
+    this.authRefreshPromise = (async () => {
+      try {
+        const headers = await this.authProvider!();
+        await this.setAuthHeaders(headers);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        this.authRefreshPromise = null;
+      }
+    })();
+    return this.authRefreshPromise;
   }
 
   /** Refresh credentials then re-sync — the 401 recovery path. Throttled. */
@@ -407,17 +415,19 @@ class GeoPulse {
     // A hand-tuned distanceFilter implies manual mode: send it WITHOUT a preset,
     // otherwise the native `ready()` resolves the preset and overwrites it.
     const manualDistance = options.distanceFilter != null;
+    // Spread only the options the caller actually provided — relying on the
+    // native merge to skip `undefined` works today but is contract-fragile.
     await this.ready({
       desiredAccuracy: MODE_TO_ACCURACY[mode],
       ...(manualDistance
         ? { distanceFilter: options.distanceFilter }
         : { preset: mode === 'balanced' ? 'standard' : mode }),
-      enableTripDetection: options.trips,
-      enableDrivingEvents: options.driving,
-      url: options.url,
+      ...(options.trips !== undefined && { enableTripDetection: options.trips }),
+      ...(options.driving !== undefined && { enableDrivingEvents: options.driving }),
+      ...(options.url !== undefined && { url: options.url }),
       autoSync: options.url != null,
-      headers: options.headers,
-      notification: options.notification,
+      ...(options.headers !== undefined && { headers: options.headers }),
+      ...(options.notification !== undefined && { notification: options.notification }),
     });
 
     const sub = this.onLocation(onLocation);

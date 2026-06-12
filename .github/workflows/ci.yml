@@ -41,7 +41,7 @@ jobs:
       - name: Build & run the fusion core test
         working-directory: android/src/main/cpp
         run: |
-          g++ -std=c++17 -O2 kalman.cpp fusion.cpp test_fusion.cpp -o test_fusion
+          g++ -std=c++17 -O2 kalman.cpp kalman_cv.cpp fusion.cpp test_fusion.cpp -o test_fusion
           ./test_fusion
 
   kotlin:

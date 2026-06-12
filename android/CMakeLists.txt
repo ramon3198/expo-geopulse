@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(geopulse-fusion SHARED
   src/main/cpp/kalman.cpp
+  src/main/cpp/kalman_cv.cpp
   src/main/cpp/fusion.cpp
   src/main/cpp/jni_bridge.cpp)
 

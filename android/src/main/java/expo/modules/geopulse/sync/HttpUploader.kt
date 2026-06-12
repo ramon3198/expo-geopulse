@@ -19,12 +19,37 @@ object HttpUploader {
   // batch of locations compresses ~80-90%, cutting upload bytes and battery.
   private const val GZIP_MIN_BYTES = 256
 
+  // One in-run retry absorbs transient connect blips (DNS hiccup, socket reset)
+  // without waiting for WorkManager's 30s+ backoff. Retrying after a *read*
+  // timeout can re-send a batch the server already stored — safe, the
+  // documented contract has backends dedup by uuid.
+  private const val TRANSIENT_RETRIES = 1
+  private const val RETRY_PAUSE_MS = 250L
+
   fun upload(
     url: String,
     method: String,
     headers: Map<String, String>,
     body: String,
     timeoutMs: Int = 30_000,
+  ): Result {
+    var attempt = 0
+    while (true) {
+      val result = uploadOnce(url, method, headers, body, timeoutMs)
+      // Only status 0 (no HTTP response at all) is worth an immediate retry;
+      // an HTTP error code is a server answer, not a network blip.
+      if (result.status != 0 || attempt >= TRANSIENT_RETRIES) return result
+      attempt++
+      Thread.sleep(RETRY_PAUSE_MS * attempt)
+    }
+  }
+
+  private fun uploadOnce(
+    url: String,
+    method: String,
+    headers: Map<String, String>,
+    body: String,
+    timeoutMs: Int,
   ): Result {
     var connection: HttpURLConnection? = null
     return try {

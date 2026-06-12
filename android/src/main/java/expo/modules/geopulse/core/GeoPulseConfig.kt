@@ -62,7 +62,17 @@ class GeoPulseConfig : Record {
 
   // accuracy / fusion
   @Field var enableKalman: Boolean = true
+  // Constant-velocity Kalman model: predicts through motion and fuses the GPS
+  // chip's doppler velocity — host-tested ~4x better moving RMSE (15x with
+  // doppler) vs the scalar filter. Off by default until field-validated.
+  @Field var enableCvKalman: Boolean = false
   @Field var accuracyFilter: Double = 0.0
+  // Accuracy assumed for the rare fix that reports none (legacy providers).
+  @Field var defaultAccuracy: Double = 30.0
+  // Floor on reported accuracy inside the Kalman filters. 1.0 guards against
+  // chips that over-state precision; lower it (e.g. 0.1) so sub-meter sources
+  // (RTK) keep their real accuracy instead of being degraded 10x.
+  @Field var minKalmanAccuracy: Double = 1.0
 
   // lifecycle
   @Field var enableHeadless: Boolean = false
@@ -82,6 +92,12 @@ class GeoPulseConfig : Record {
   @Field var batchSync: Boolean = false
   @Field var maxBatchSize: Int = 250
   @Field var maxRecordsToPersist: Int = 10_000
+
+  // Sync constraints: restrict uploads to unmetered networks (Wi-Fi) and/or to
+  // when the battery isn't low. Defaults preserve current behavior (any network,
+  // any battery). Useful for large backlogs on capped mobile plans.
+  @Field var syncOnWifiOnly: Boolean = false
+  @Field var syncRequiresBatteryNotLow: Boolean = false
 
   // Buffer overflow policy (P0-3): when the buffer reaches maxRecordsToPersist,
   // "dropOldest" (default, right for route tracking) drops the oldest queued
@@ -158,7 +174,10 @@ class GeoPulseConfig : Record {
     c.idleTimeout = idleTimeout
     c.drivingMinSpeed = drivingMinSpeed
     c.enableKalman = enableKalman
+    c.enableCvKalman = enableCvKalman
     c.accuracyFilter = accuracyFilter
+    c.defaultAccuracy = defaultAccuracy
+    c.minKalmanAccuracy = minKalmanAccuracy
     c.enableHeadless = enableHeadless
     c.headlessCoalesceWindow = headlessCoalesceWindow
     c.headlessCoalesceCount = headlessCoalesceCount
@@ -172,6 +191,8 @@ class GeoPulseConfig : Record {
     c.batchSync = batchSync
     c.maxBatchSize = maxBatchSize
     c.maxRecordsToPersist = maxRecordsToPersist
+    c.syncOnWifiOnly = syncOnWifiOnly
+    c.syncRequiresBatteryNotLow = syncRequiresBatteryNotLow
     c.bufferOverflowPolicy = bufferOverflowPolicy
     c.discardStatusCodes = discardStatusCodes
     c.retryStatusCodes = retryStatusCodes
@@ -203,7 +224,10 @@ class GeoPulseConfig : Record {
       "idleTimeout" to idleTimeout,
       "drivingMinSpeed" to drivingMinSpeed,
       "enableKalman" to enableKalman,
+      "enableCvKalman" to enableCvKalman,
       "accuracyFilter" to accuracyFilter,
+      "defaultAccuracy" to defaultAccuracy,
+      "minKalmanAccuracy" to minKalmanAccuracy,
       "enableHeadless" to enableHeadless,
       "headlessCoalesceWindow" to headlessCoalesceWindow,
       "headlessCoalesceCount" to headlessCoalesceCount,
@@ -217,6 +241,8 @@ class GeoPulseConfig : Record {
       "batchSync" to batchSync,
       "maxBatchSize" to maxBatchSize,
       "maxRecordsToPersist" to maxRecordsToPersist,
+      "syncOnWifiOnly" to syncOnWifiOnly,
+      "syncRequiresBatteryNotLow" to syncRequiresBatteryNotLow,
       "bufferOverflowPolicy" to bufferOverflowPolicy,
       "discardStatusCodes" to discardStatusCodes,
       "retryStatusCodes" to retryStatusCodes,
@@ -260,7 +286,10 @@ class GeoPulseConfig : Record {
     (map["idleTimeout"] as? Number)?.let { idleTimeout = it.toLong() }
     (map["drivingMinSpeed"] as? Number)?.let { drivingMinSpeed = it.toDouble() }
     (map["enableKalman"] as? Boolean)?.let { enableKalman = it }
+    (map["enableCvKalman"] as? Boolean)?.let { enableCvKalman = it }
     (map["accuracyFilter"] as? Number)?.let { accuracyFilter = it.toDouble() }
+    (map["defaultAccuracy"] as? Number)?.let { defaultAccuracy = it.toDouble() }
+    (map["minKalmanAccuracy"] as? Number)?.let { minKalmanAccuracy = it.toDouble() }
     (map["enableHeadless"] as? Boolean)?.let { enableHeadless = it }
     (map["headlessCoalesceWindow"] as? Number)?.let { headlessCoalesceWindow = it.toLong() }
     (map["headlessCoalesceCount"] as? Number)?.let { headlessCoalesceCount = it.toInt() }
@@ -276,6 +305,8 @@ class GeoPulseConfig : Record {
     (map["batchSync"] as? Boolean)?.let { batchSync = it }
     (map["maxBatchSize"] as? Number)?.let { maxBatchSize = it.toInt() }
     (map["maxRecordsToPersist"] as? Number)?.let { maxRecordsToPersist = it.toInt() }
+    (map["syncOnWifiOnly"] as? Boolean)?.let { syncOnWifiOnly = it }
+    (map["syncRequiresBatteryNotLow"] as? Boolean)?.let { syncRequiresBatteryNotLow = it }
     (map["bufferOverflowPolicy"] as? String)?.let { bufferOverflowPolicy = it }
     (map["discardStatusCodes"] as? List<*>)?.let { list -> discardStatusCodes = list.mapNotNull { (it as? Number)?.toInt() } }
     (map["retryStatusCodes"] as? List<*>)?.let { list -> retryStatusCodes = list.mapNotNull { (it as? Number)?.toInt() } }

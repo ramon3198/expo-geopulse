@@ -126,8 +126,24 @@ export interface GeoPulseConfig {
   // --- accuracy / fusion (M3) ---
   /** Run raw fixes through the C++/NDK Kalman fusion filter. */
   enableKalman?: boolean;
+  /**
+   * Use the constant-velocity Kalman model instead of the scalar one: it
+   * predicts through motion and fuses the GPS chip's doppler velocity
+   * (speed/bearing), cutting moving error several-fold in host benchmarks —
+   * the filter stops trailing behind a moving device. Default `false` (the
+   * field-proven scalar filter) while the CV model gathers real-world mileage.
+   */
+  enableCvKalman?: boolean;
   /** Discard fixes whose accuracy is worse than this (m). `0` keeps all. */
   accuracyFilter?: number;
+  /** Accuracy (m) assumed for the rare fix that reports none. Default 30. */
+  defaultAccuracy?: number;
+  /**
+   * Floor (m) on reported accuracy inside the Kalman filters. The default `1.0`
+   * guards against chips that over-state precision; lower it (e.g. `0.1`) so a
+   * sub-meter source (RTK) keeps its real accuracy instead of being degraded.
+   */
+  minKalmanAccuracy?: number;
 
   // --- lifecycle ---
   /**
@@ -171,6 +187,14 @@ export interface GeoPulseConfig {
   maxBatchSize?: number;
   /** Max points kept in the local buffer (the sync cap). Default 10000. */
   maxRecordsToPersist?: number;
+  /**
+   * Only upload over unmetered networks (Wi-Fi). Queued batches wait until one
+   * is available. Default `false` (any connection) — consider it for large
+   * backlogs on capped mobile plans.
+   */
+  syncOnWifiOnly?: boolean;
+  /** Defer uploads while the battery is low. Default `false`. */
+  syncRequiresBatteryNotLow?: boolean;
   /**
    * What to do when the buffer reaches `maxRecordsToPersist`: `'dropOldest'`
    * (default — right for route tracking) drops the oldest queued points;
@@ -401,6 +425,9 @@ export interface GeoPulseError {
    * - `BACKGROUND_PERMISSION_MISSING` — tracking started with foreground-only
    *   location; it will pause when the app is backgrounded until "Allow all the
    *   time" is granted.
+   * - `SYNC_ABANDONED` — background sync gave up after ~30 min of failed retries
+   *   (broken URL/auth/server); points stay buffered and the next sync trigger
+   *   starts a fresh cycle. Includes `status` + `attempts`.
    */
   code: string;
   message: string;
@@ -416,6 +443,8 @@ export interface GeoPulseError {
   fromVersion?: number;
   /** Schema version migrated to, present for `DB_MIGRATION_FAILED`. */
   toVersion?: number;
+  /** Failed attempts before giving up, present for `SYNC_ABANDONED`. */
+  attempts?: number;
 }
 
 export interface GeoPulseState {
